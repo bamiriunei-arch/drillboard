@@ -942,9 +942,13 @@ function rightAnglePts(pts, axis){
 function posInMove(i, id, u){
   const f = ftlOf(i, id);
   if (f){
+    // 先頭の道の上の点と、メモリに合わせた立ち位置は少しずれる。出発の1カウントと到着の1カウントでならして、セットの境目で跳ばないようにする
     const q = ftlPoint(f, u), C = +S.sets[i].counts || 0;
-    if (gridStep() > 0 && C > 0 && u > C - 1){ const e = ftlPoint(f, C), B = S.sets[i].pos[id], w = clamp(u - (C - 1), 0, 1); return [q[0] + (B[0] - e[0]) * w, q[1] + (B[1] - e[1]) * w]; }
-    return q;
+    if (!(C > 0)) return q;
+    const s0 = ftlPoint(f, 0), A = S.sets[i - 1].pos[id], e = ftlPoint(f, C), B = S.sets[i].pos[id];
+    if (!A || !B) return q;
+    const wa = 1 - clamp(u, 0, 1), wb = clamp(u - (C - 1), 0, 1);
+    return [q[0] + (A[0] - s0[0]) * wa + (B[0] - e[0]) * wb, q[1] + (A[1] - s0[1]) * wa + (B[1] - e[1]) * wb];
   }
   const m = moveSpec(i, id);
   if (u <= m.a) return m.A; if (u >= m.b) return m.B;
@@ -1143,7 +1147,9 @@ function fit(){
   if (!W || !H) return;
   const [hx, hy] = fieldHalf(), fbt = S.field.type === 'football', m = fbt ? 2.5 : 1.2;
   const pd = S.field.podium.show ? S.field.podium.gap + POD_D / 2 + 0.2 : 0;
-  const top = hy + m, bot = hy + Math.max(m, pd), labelPx = 58;
+  // 下の「指揮台」「客席（正面）」の文字と、その下の操作ヒントの行が重ならないだけの余白をとる
+  const hp = document.getElementById('help'), helpPx = hp && getComputedStyle(hp).display !== 'none' && hp.textContent ? 18 : 0;
+  const top = hy + m, bot = hy + Math.max(m, pd), labelPx = 58 + helpPx;
   view.scale = Math.min((W - 16) / (2 * (hx + m)), (H - labelPx - 8) / (top + bot));
   view.ox = W / 2; view.oy = 4 + top * view.scale; fitted = true;
 }
@@ -1544,13 +1550,18 @@ function renderPlayhead(){ const [r0, r1] = playRange(), sp = (r1 - r0) || 1; $(
 function renderTimeline(){
   const T = tl(), [r0, r1] = playRange(), sp = (r1 - r0) || 1, pc = v => (v - r0) / sp * 100; let h = '';
   const first = {}; S.sets.forEach((st, i) => { if (first[st.sg] == null) first[st.sg] = i; });
+  // セットが細かく続くところは番号が重なるので、前の番号から離れているときだけ書く（線は全部引く）
+  const tw = ($('#timeline') && $('#timeline').clientWidth) || 0; let lastPx = -1e9;
+  const room = (v, txt) => { if (!tw) return true; const px = pc(v) / 100 * tw; if (px - lastPx < String(txt).length * 7 + 5) return false; lastPx = px; return true; };
   T.forEach((x, i) => {
     if (x.end < r0 - 1e-9 || x.start > r1 + 1e-9 || (x.end - r0 < 1e-9 && i !== 0 && x.start < r0)) return;
     if (x.arrive > x.start) h += `<div class="seg move" style="left:${pc(x.start)}%;width:${(x.arrive - x.start) / sp * 100}%"></div>`;
     if (x.end > x.arrive) h += `<div class="seg hold" style="left:${pc(x.arrive)}%;width:${(x.end - x.arrive) / sp * 100}%"></div>`;
     const sg = S.sets[i].sg, isFirst = first[sg] === i;
     if (ui.playAll && isFirst && S.songs.length > 1) h += `<div class="mark songmark" style="left:${pc(x.start)}%"><i>${esc(S.songs[sg].name)}</i></div>`;
-    h += `<div class="mark" style="left:${pc(x.arrive)}%"><i>${ui.playAll && isFirst && S.songs.length > 1 ? '' : i - first[sg] + 1}${S.sets[i].rm ? ` <span class="rm">${esc(S.sets[i].rm)}</span>` : ''}</i></div>`;
+    const lab = (ui.playAll && isFirst && S.songs.length > 1 ? '' : String(i - first[sg] + 1)) + (S.sets[i].rm ? ' ' + S.sets[i].rm : '');
+    const show = lab && room(x.arrive, lab);
+    h += `<div class="mark" style="left:${pc(x.arrive)}%"><i>${show ? `${ui.playAll && isFirst && S.songs.length > 1 ? '' : i - first[sg] + 1}${S.sets[i].rm ? ` <span class="rm">${esc(S.sets[i].rm)}</span>` : ''}` : ''}</i></div>`;
   });
   $('#segs').innerHTML = h; renderPlayhead();
 }
@@ -1746,7 +1757,8 @@ function pastePos(){
   ensureEdit(); pushHist();
   const pos = S.sets[ui.cur].pos; live.forEach(m => pos[m.id] = snapP([...m.pos]));
   ui.sel = new Set(live.map(m => m.id));
-  toast(`${live.length}人の位置を「${S.sets[ui.cur].name}」に貼り付けました`);
+  const fol = live.filter(m => ftlOf(ui.cur, m.id)).length;
+  toast(`${live.length}人の位置を「${S.sets[ui.cur].name}」に貼り付けました` + (fol ? `（Follow the leader のあとの${fol}人は、先頭の道をたどる位置に戻ります）` : ''));
   autoFixAfterEdit(ui.cur); changed(true);
 }
 /* ---------- 名簿 ---------- */
@@ -1781,10 +1793,11 @@ const PART_ALIASES = {
   DM:['dm','drummajor','ドラムメジャー','ドラメ','指揮','指揮者'],
   Ot:['ot','other','その他'],
 };
-function partOf(cell){
+function partOf(cell, exact){
   const v = String(cell).toLowerCase().replace(/[\s.．・]/g, ''); if (!v) return null;
   for (const s of SECTIONS){ if (v === s.k.toLowerCase() || v === s.n.replace(/[\s・.．]/g, '').toLowerCase()) return s.k; }
   for (const k in PART_ALIASES) if (PART_ALIASES[k].includes(v)) return k;
+  if (exact) return null;
   let best = null, bl = 0;
   for (const k in PART_ALIASES) PART_ALIASES[k].forEach(a => { if (/[^\x00-\x7f]/.test(a) && a.length >= 2 && a.length > bl && v.includes(a)){ best = k; bl = a.length; } });
   return best;
@@ -1794,7 +1807,16 @@ function parseRoster(text, defSec){
   text.split(/\r?\n/).forEach(line => {
     const cells = line.split(/\t|,|、|，/).map(c => c.trim()).filter(Boolean); if (!cells.length) return;
     if (cells.some(c => /^(名前|氏名|パート|楽器|担当)$/.test(c))) return;
-    if (cells.length === 1){ out.push({ label:cells[0], sec:defSec }); return; }
+    if (cells.length === 1){
+      // 「Tp 山田」「山田 太郎 フルート」のようにスペースで区切ったとき：先頭か最後がパート名ならそれを使う（名前の中のスペースはそのまま）
+      const tk = cells[0].split(/[\s　]+/).filter(Boolean);
+      if (tk.length >= 2){
+        const a = partOf(tk[0], true), z = partOf(tk[tk.length - 1], true);
+        if (a){ out.push({ label:tk.slice(1).join(' '), sec:a }); return; }
+        if (z){ out.push({ label:tk.slice(0, -1).join(' '), sec:z }); return; }
+      }
+      out.push({ label:cells[0], sec:defSec }); return;
+    }
     let pi = -1; for (let i = cells.length - 1; i >= 0; i--){ if (partOf(cells[i])){ pi = i; break; } }
     if (pi < 0){ out.push({ label:cells[0], sec:'Ot' }); return; }
     const name = cells.find((c, i) => i !== pi) || cells[pi];
@@ -3070,6 +3092,7 @@ cssMono = getComputedStyle(document.documentElement).getPropertyValue('--mono').
 S = loadSaved() || normalize(sampleShow('football'));
 ui.t = tl()[0].arrive;
 new ResizeObserver(resize).observe(wrap);
+{ let tw0 = 0; new ResizeObserver(() => { const w = $('#timeline').clientWidth; if (Math.abs(w - tw0) > 4){ tw0 = w; renderTimeline(); } }).observe($('#timeline')); }
 let savedMode = 'edit'; try { savedMode = localStorage.getItem(LSKEY + '.mode') || 'edit'; ui.avOff = clamp(+localStorage.getItem(LSKEY + '.avoff') || 0, -1000, 1000); } catch (e) {}
 renderTop(); renderSongbar(); renderTimeline(); setMode(savedMode); resize();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);

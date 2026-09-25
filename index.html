@@ -2660,12 +2660,43 @@ async function fixWebmDuration(blob, ms){
   return blob;
 }
 // 1コマずつ描いて WebCodecs で書き出す。再生の速さや端末の重さに左右されず、音と映像がコマ単位でそろう
+// Safari（と iPhone・iPad のブラウザ）は、再生しながらの録画（MediaRecorder）で長さやテンポが狂うことがあるので使わない
+const isWebKit = () => { const ua = navigator.userAgent; return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) || (/Safari\//.test(ua) && !/Chrome\/|Chromium\/|CriOS|FxiOS|EdgiOS|Edg\//.test(ua)); };
+const canAudioEnc = () => typeof AudioEncoder !== 'undefined' && typeof AudioData !== 'undefined' && typeof OfflineAudioContext !== 'undefined';
 async function saveVideo(all){
   if (rec) return;
   let r;
-  try { r = await exportVideo(all); } catch (e) { r = 'error'; }
+  try { r = await exportVideo(all); } catch (e) { r = 'error'; exportErr = e; }
+  if (r === 'done') return;
+  const why = exportErr ? `（${String(exportErr.message || exportErr).slice(0, 80)}）` : '';
+  if (isWebKit()) return toast(r === 'unsupported' ? 'このブラウザでは映像の書き出しができません。Chrome で保存してください' : `映像の書き出しに失敗しました${why}。Chrome で試してください`);
   if (r === 'unsupported') return saveVideoRT(all);
-  if (r === 'error'){ toast('書き出しに失敗したので、再生しながら録画する方法に切り替えます'); await new Promise(res => setTimeout(res, 1200)); return saveVideoRT(all); }
+  toast(`書き出しに失敗したので、再生しながら録画する方法に切り替えます${why}`); await new Promise(res => setTimeout(res, 1500)); return saveVideoRT(all);
+}
+let exportErr = null;
+// AAC などは、エンコーダーが頭に少し無音（プライミング）を足すので、そのぶん音が遅れる。
+// 同じ設定で短い音を書き出して読み戻し、遅れを測って、映像をその分だけ後ろにずらしてそろえる
+async function encoderDelay(cfg, mux){
+  try {
+    const M = window.Mp4Muxer, SR = cfg.sampleRate, n = Math.round(SR * 0.6), at = Math.round(SR * 0.2), len = Math.round(SR * 0.1);
+    const tgt = new M.ArrayBufferTarget(), mx = new M.Muxer({ target:tgt, fastStart:'in-memory', firstTimestampBehavior:'offset', audio:{ codec:mux, numberOfChannels:2, sampleRate:SR } });
+    let err = null;
+    const enc = new AudioEncoder({ output:(c, m) => mx.addAudioChunk(c, m), error:e => { err = e; } });
+    enc.configure(cfg);
+    for (let i = 0; i < n; i += 960){
+      const k = Math.min(960, n - i), d = new Float32Array(k * 2);
+      for (let j = 0; j < k; j++){ const q = i + j, x = q >= at && q < at + len ? 0.5 * Math.sin(2 * Math.PI * 1000 * (q - at) / SR) : 0; d[j] = x; d[k + j] = x; }
+      const ad = new AudioData({ format:'f32-planar', sampleRate:SR, numberOfFrames:k, numberOfChannels:2, timestamp:Math.round(i / SR * 1e6), data:d }); enc.encode(ad); ad.close();
+    }
+    await enc.flush(); enc.close(); if (err) return 0;
+    mx.finalize();
+    const buf = await new Promise((res, rej) => { const p = new OfflineAudioContext(1, 1, SR).decodeAudioData(tgt.buffer, res, rej); if (p && p.catch) p.catch(rej); });
+    const x = buf.getChannelData(0); let idx = -1;
+    for (let i = 0; i < x.length; i++) if (Math.abs(x[i]) > 0.25){ idx = i; break; }
+    if (idx < 0) return 0;
+    const delay = idx / buf.sampleRate - at / SR;
+    return delay > 0.002 && delay < 0.25 ? Math.round(delay * 1e6) : 0;
+  } catch (e) { return 0; }
 }
 async function pickEnc(E, list){
   for (const [cfg, mux] of list){ try { const r = await E.isConfigSupported(cfg); if (r && r.supported) return [cfg, mux]; } catch (e) {} }
@@ -2684,11 +2715,12 @@ async function exportVideo(all){
   const plan = recAudioPlan(all), withAudio = plan.music || plan.click, VW = 1280, VH = 720, FPS = 30, SR = 48000;
   const v = await pickEnc(VideoEncoder, [['avc1.4d0028', 'avc'], ['avc1.42001f', 'avc'], ['avc1.640028', 'avc'], ['vp09.00.31.08', 'vp9'], ['av01.0.05M.08', 'av1']].map(([codec, mux]) => [{ codec, width:VW, height:VH, bitrate:4e6, framerate:FPS, ...(mux === 'avc' ? { avc:{ format:'avc' } } : {}) }, mux]));
   if (!v) return 'unsupported';
-  let a = null;
+  let a = null, noSound = false, vOff = 0;
+  exportErr = null;
   if (withAudio){
-    if (typeof AudioEncoder === 'undefined' || typeof AudioData === 'undefined' || typeof OfflineAudioContext === 'undefined') return 'unsupported';
-    a = await pickEnc(AudioEncoder, [['mp4a.40.2', 'aac'], ['opus', 'opus']].map(([codec, mux]) => [{ codec, sampleRate:SR, numberOfChannels:2, bitrate:192000 }, mux]));
-    if (!a) return 'unsupported';
+    if (canAudioEnc()) a = await pickEnc(AudioEncoder, [['mp4a.40.2', 'aac'], ['opus', 'opus']].map(([codec, mux]) => [{ codec, sampleRate:SR, numberOfChannels:2, bitrate:192000 }, mux]));
+    if (!a){ if (!isWebKit()) return 'unsupported'; noSound = true; }
+    else vOff = await encoderDelay(a[0], a[1]);
   }
   stop();
   const keepT = ui.t, [r0, r1] = all ? [0, total()] : songRange(curSong()), s0 = secAt(r0), s1 = secAt(r1), T = tl();
@@ -2701,7 +2733,7 @@ async function exportVideo(all){
     for (const q of parts){ const x = Math.max(pos, q.pos), y = Math.min(pos + data.length, q.pos + q.data.length); if (x < y) q.data.set(data.subarray(x - pos, y - pos), x - q.pos); }
     if (pos + data.length > end){ const tail = data.subarray(end - pos); parts.push({ pos:end, data:tail }); end += tail.length; }
   } });
-  const muxer = new M.Muxer({ target, fastStart:false, firstTimestampBehavior:'cross-track-offset', video:{ codec:v[1], width:VW, height:VH, frameRate:FPS }, ...(a ? { audio:{ codec:a[1], numberOfChannels:2, sampleRate:SR } } : {}) });
+  const muxer = new M.Muxer({ target, fastStart:false, firstTimestampBehavior:'cross-track-offset', video:{ codec:v[1], width:VW, height:VH }, ...(a ? { audio:{ codec:a[1], numberOfChannels:2, sampleRate:SR } } : {}) });
   // 音は先に全部エンコードしておき、映像のコマと時刻順に交互に書き込む（プレイヤーが読みやすいように）
   const aq = []; let ai = 0;
   const pushAudio = upTo => { while (ai < aq.length && aq[ai][0].timestamp <= upTo){ muxer.addAudioChunk(aq[ai][0], aq[ai][1]); aq[ai++] = null; } };
@@ -2750,7 +2782,7 @@ async function exportVideo(all){
     for (let i = 0; i < nF && !rec.cancel; i++){
       const sec = s0 + i / FPS, t = Math.min(countAtSec(sec), r1);
       renderOff(c, t);
-      const vf = new VideoFrame(c, { timestamp:Math.round(i * 1e6 / FPS), duration:dur });
+      const vf = new VideoFrame(c, { timestamp:Math.round(i * 1e6 / FPS) + vOff, duration:dur });
       ve.encode(vf, { keyFrame:i % (FPS * 2) === 0 }); vf.close();
       if (fail) throw fail;
       while (ve.encodeQueueSize > 6) await yieldUI();
@@ -2768,11 +2800,11 @@ async function exportVideo(all){
     try { ve.close(); } catch (e) {} try { ae && ae.close(); } catch (e) {}
   } catch (e){
     try { ve.close(); } catch (x) {} try { ae && ae.close(); } catch (x) {}
-    finish(); return 'error';
+    exportErr = e; finish(); return 'error';
   }
   finish();
   const blob = new Blob(parts.map(q => q.data), { type:'video/mp4' });
-  const msg = a ? `${plan.music && plan.click ? '音源とクリック音つきの' : plan.music ? '音源つきの' : 'クリック音つきの'}映像を保存しました` : '映像を保存しました';
+  const msg = a ? `${plan.music && plan.click ? '音源とクリック音つきの' : plan.music ? '音源つきの' : 'クリック音つきの'}映像を保存しました` : noSound ? 'このブラウザでは音を入れられないので、音なしで保存しました（音つきは Chrome で）' : '映像を保存しました';
   await saveOut(`${safeName(S.title)}_${all ? '通し' : safeName(S.songs[curSong()].name)}.mp4`, blob, msg);
   return 'done';
 }
@@ -2785,7 +2817,7 @@ function renderRecNote(){
   const el = $('#recAudioNote'); if (!el) return;
   const loaded = S.songs.map((x, g) => ui.audios[g] ? g : -1).filter(g => g >= 0);
   const st = loaded.length ? `音源あり：${loaded.map(g => S.songs[g].name).join('、')}` : '曲の音源は未読み込み（「設定」の曲ごとの音源で読み込むと映像に入ります。音源ファイルはショーのデータには保存されません）';
-  el.textContent = st;
+  el.textContent = st + (isWebKit() && !canAudioEnc() ? '。このブラウザでは音つきの映像は作れません（Chrome か、Safari 26 以降なら作れます）' : '');
 }
 async function saveVideoRT(all){
   if (rec) return;

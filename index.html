@@ -437,7 +437,7 @@ const HEX = /^#[0-9a-f]{6}$/i;
 const partColor = k => (S && S.partColors && S.partColors[k]) || secOf(k).c;
 const colorOf = p => (p && p.c) || partColor(p.sec);
 const LSKEY = 'drillboard.v1';
-const MAX_P = 100, MAX_DM = 3, MAX_COUNTS = 720; // 720カウント＝♩=60で12分
+const MAX_P = 100, MAX_DM = 3, MAX_COUNTS = 900; // 900カウント＝♩=60で15分
 const POD_W = 0.9, POD_D = 0.95; // 指揮台 横90cm・縦95cm
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -2289,7 +2289,7 @@ function setsHTML(){
       <input type="number" id="sb${i}" data-f="bpm" min="30" max="300" step="1" value="${s.bpm || ''}" placeholder="${song.bpm}" aria-label="テンポ">
       <span>${chipFor(i, an[i])}</span><span class="meta">${metaHTML(i)}</span></div>`;
   });
-  h += `</div><p class="note">移動＝前のセットから何カウントで動くか。静止＝着いてから止まっているカウント。テンポが空欄のときはこの曲のテンポ（♩=${song.bpm}、下の再生バーで変更）。${g > 0 ? '1つ目のセットの「移動」は、前の曲の最後からの曲間の移動です。' : ''}全曲の合計は最大${MAX_COUNTS}カウント（♩=60で12分）まで。今は通しで${total()}カウントです。</p>`;
+  h += `</div><p class="note">移動＝前のセットから何カウントで動くか。静止＝着いてから止まっているカウント。テンポが空欄のときはこの曲のテンポ（♩=${song.bpm}、下の再生バーで変更）。${g > 0 ? '1つ目のセットの「移動」は、前の曲の最後からの曲間の移動です。' : ''}全曲の合計は最大${MAX_COUNTS}カウント（♩=60で15分）まで。今は通しで${total()}カウントです。</p>`;
   const r = an[ui.cur], cs = S.sets[ui.cur];
   const LL = setLen(ui.cur);
   h += `<div class="issues"><h3>${esc(cs.name)} の練習番号・小節・長さ</h3>
@@ -2505,7 +2505,7 @@ pane.addEventListener('change', e => {
     const s0 = S.sets[ui.cur], f = t.id === 'setMvBars' ? 'counts' : 'hold'; if (f === 'counts' && ui.cur === 0) return;
     pushHist(); let v = Math.max(0, Math.round((+t.value || 0) * meterOf(ui.cur)));
     const room = MAX_COUNTS - (total() - (+s0[f] || 0));
-    if (v > room){ v = Math.max(0, room); toast(`ショー全体は最大${MAX_COUNTS}カウント（♩=60で12分）までです。${v}カウントにしました`); }
+    if (v > room){ v = Math.max(0, room); toast(`ショー全体は最大${MAX_COUNTS}カウント（♩=60で15分）までです。${v}カウントにしました`); }
     s0[f] = v; if (f === 'counts') s0.base = v;
     ui.t = tl()[ui.cur].arrive; ui.freezeT = ui.t; changed(true); return;
   }
@@ -2524,7 +2524,7 @@ pane.addEventListener('change', e => {
     else {
       let v = Math.max(0, Math.round(+t.value || 0));
       const room = MAX_COUNTS - (total() - (+s[f] || 0));
-      if (v > room){ v = Math.max(0, room); toast(`ショー全体は最大${MAX_COUNTS}カウント（♩=60で12分）までです。${v}にしました`); }
+      if (v > room){ v = Math.max(0, room); toast(`ショー全体は最大${MAX_COUNTS}カウント（♩=60で15分）までです。${v}にしました`); }
       s[f] = v; if (f === 'counts') s.base = v;
     }
     ui.t = tl()[ui.cur].arrive; changed(true); return;
@@ -2597,7 +2597,7 @@ document.addEventListener('click', e => {
     ui.sel = new Set([id]); changed(true);
   } else if (a === 'autoFixCur'){
     ensureEdit(); pushHist(); const before = JSON.stringify(S); autoFixAfterEdit(ui.cur, true);
-    if (JSON.stringify(S) === before){ hist.pop(); toast('直せるところはありませんでした（720カウントの上限に達していませんか）'); } else changed(true);
+    if (JSON.stringify(S) === before){ hist.pop(); toast(`直せるところはありませんでした（${MAX_COUNTS}カウントの上限に達していませんか）`); } else changed(true);
   } else if (a === 'tmApply' || a === 'tmReset'){
     const ids = selIds(); if (!ids.length || ui.cur === 0) return; ensureEdit();
     const s = S.sets[ui.cur], C = +s.counts || 0;

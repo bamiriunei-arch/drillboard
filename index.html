@@ -70,7 +70,7 @@ input[type=number]{font-family:var(--mono);width:4.4em}
 .tools input[type=number]{width:3.6em}
 .canvas-wrap{position:relative;flex:1;min-height:300px;border-radius:10px;overflow:hidden;background:#1f4426}
 #cv{display:block;width:100%;height:100%;touch-action:none}
-.hud{position:absolute;left:10px;top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;pointer-events:none;max-width:calc(100% - 20px)}
+.hud{position:absolute;left:10px;top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;pointer-events:none;max-width:calc(100% - 150px)}
 .hud span{background:rgba(12,16,22,.72);color:#F1F4F7;border-radius:6px;padding:3px 8px;font-size:12px;backdrop-filter:blur(4px)}
 .hud b{font-family:var(--mono);font-weight:600}
 .hud .bad{background:rgba(184,50,42,.9)}
@@ -188,6 +188,7 @@ tr.songrow td{background:var(--surface2);font-weight:700;font-size:11px;color:va
 .shh{font-size:12px;margin:6px 0 0;color:var(--muted);letter-spacing:.06em;font-weight:500}
 body.no-dl .dl-only{display:none!important}
 body:not(.has-room) .room-only{display:none!important}
+body:not(.can-link) .link-only{display:none!important}
 .recbar{height:10px;border-radius:6px;background:var(--surface2);overflow:hidden;border:1px solid var(--line)}
 .recbar i{display:block;height:100%;width:0;background:var(--accent)}
 .rotbox summary{cursor:pointer;list-style-position:inside}
@@ -349,6 +350,9 @@ body:not(.has-room) .room-only{display:none!important}
       <button data-act="loadJson">貼り付けたデータを読み込む</button>
       <label class="btn">ファイルを開く<input type="file" id="fileIn" accept=".json,.txt,application/json,text/plain" hidden></label>
     </div>
+    <h3 class="shh link-only">iPhone・ほかの端末に送る</h3>
+    <div class="row link-only"><button data-act="shareLink" class="primary">共有リンクを送る…</button><button data-act="copyLink">共有リンクをコピー</button></div>
+    <p class="note link-only">リンクを開くと、このショーがそのまま開きます（ショー一覧にも入ります）。ショーのデータはリンクの中に入っていて、どこのサーバーにも送られません。LINE・メッセージ・AirDrop などで送ってください。</p>
     <h3 class="shh dl-only">画像・映像で保存</h3>
     <div class="row dl-only">
       <button data-act="savePng">今のセットを画像で</button>
@@ -806,7 +810,36 @@ const CODE_HEAD = 'DRILL2:', CODE_HEAD3 = 'DRILL3:';
 function putVar(out, n){ let z = n >= 0 ? n * 2 : -n * 2 - 1; while (z >= 128){ out.push((z % 128) | 128); z = Math.floor(z / 128); } out.push(z); }
 function getVar(buf, st){ let z = 0, m = 1, b; do { b = buf[st.i++]; z += (b & 127) * m; m *= 128; } while (b & 128); return z % 2 ? -(z + 1) / 2 : z / 2; }
 async function deflate(bytes){ return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer()); }
-async function inflate(bytes){ return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()); }
+async function inflate(bytes){
+  if (typeof DecompressionStream !== 'undefined'){ try { return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()); } catch (e) {} }
+  return inflateRawJS(bytes);
+}
+// deflate-raw の展開（古いブラウザ用。puff.c と同じ手順）
+function inflateRawJS(src){
+  let pos = 0, bb = 0, bc = 0; const out = [];
+  const bit = () => { if (!bc){ if (pos >= src.length) throw new Error('eof'); bb = src[pos++]; bc = 8; } const b = bb & 1; bb >>= 1; bc--; return b; };
+  const bits = n => { let v = 0; for (let i = 0; i < n; i++) v |= bit() << i; return v; };
+  const build = L => { const count = new Uint16Array(16), offs = new Uint16Array(16), symbol = new Uint16Array(L.length); L.forEach(l => count[l]++); count[0] = 0; for (let i = 1; i < 16; i++) offs[i] = offs[i - 1] + count[i - 1]; L.forEach((l, sy) => { if (l) symbol[offs[l]++] = sy; }); return { count, symbol }; };
+  const dec = h => { let code = 0, first = 0, index = 0; for (let len = 1; len < 16; len++){ code |= bit(); const c = h.count[len]; if (code - c < first) return h.symbol[index + (code - first)]; index += c; first += c; first <<= 1; code <<= 1; } throw new Error('bad code'); };
+  const LB = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258], LE = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+  const DB = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577], DE = [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
+  let last;
+  do {
+    last = bit(); const type = bits(2);
+    if (type === 0){ bc = 0; const len = src[pos] | (src[pos + 1] << 8); pos += 4; for (let i = 0; i < len; i++) out.push(src[pos++]); continue; }
+    let lit, dst;
+    if (type === 1){ const L = []; for (let i = 0; i < 288; i++) L.push(i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8); lit = build(L); dst = build(new Array(30).fill(5)); }
+    else if (type === 2){
+      const hl = bits(5) + 257, hd = bits(5) + 1, hc = bits(4) + 4, ord = [16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15], cl = new Array(19).fill(0);
+      for (let i = 0; i < hc; i++) cl[ord[i]] = bits(3);
+      const ch = build(cl), L = [];
+      while (L.length < hl + hd){ const sy = dec(ch); if (sy < 16) L.push(sy); else if (sy === 16){ const p = L[L.length - 1]; let r = 3 + bits(2); while (r--) L.push(p); } else if (sy === 17){ let r = 3 + bits(3); while (r--) L.push(0); } else { let r = 11 + bits(7); while (r--) L.push(0); } }
+      lit = build(L.slice(0, hl)); dst = build(L.slice(hl));
+    } else throw new Error('bad block');
+    for (;;){ const sy = dec(lit); if (sy < 256) out.push(sy); else if (sy === 256) break; else { const i = sy - 257, len = LB[i] + bits(LE[i]), ds = dec(dst), d = DB[ds] + bits(DE[ds]), st = out.length - d; for (let k = 0; k < len; k++) out.push(out[st + k]); } }
+  } while (!last);
+  return new Uint8Array(out);
+}
 function toB64url(bytes){ let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 function fromB64url(str){ const b = atob(str.replace(/-/g, '+').replace(/_/g, '/')); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
 async function makeCode(sh){
@@ -820,8 +853,8 @@ async function makeCode(sh){
 }
 async function readCode(text){
   text = text.trim();
+  { const m = /[#&]d=([^&\s]+)/.exec(text); if (m && /^https?:|^file:/.test(text)) text = decodeURIComponent(m[1]); }
   if (text.startsWith(CODE_HEAD3)){
-    if (typeof DecompressionStream === 'undefined') throw new Error('このブラウザでは圧縮データを開けません');
     const buf = await inflate(fromB64url(text.slice(CODE_HEAD3.length).replace(/\s+/g, ''))), st = { i:0 };
     const len = getVar(buf, st), o = JSON.parse(new TextDecoder().decode(buf.subarray(st.i, st.i + len))); st.i += len;
     const n = (o.p || []).length * 2;
@@ -829,9 +862,8 @@ async function readCode(text){
     return normalize(unpackShow(o));
   }
   if (text.startsWith(CODE_HEAD)){
-    if (typeof DecompressionStream === 'undefined') throw new Error('このブラウザでは圧縮データを開けません');
     const bytes = fromB64url(text.slice(CODE_HEAD.length).replace(/\s+/g, ''));
-    text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+    text = new TextDecoder().decode(await inflate(bytes));
   }
   return normalize(unpackShow(JSON.parse(text)));
 }
@@ -2622,6 +2654,28 @@ pane.addEventListener('change', e => {
 const LIBKEY = LSKEY + '.lib';
 function libLoad(){ try { const a = JSON.parse(localStorage.getItem(LIBKEY) || '[]'); return Array.isArray(a) ? a.filter(x => x && x.id && x.code) : []; } catch (e) { return []; } }
 function libSaveAll(a){ try { localStorage.setItem(LIBKEY, JSON.stringify(a)); return true; } catch (e) { toast('保存する場所がいっぱいです。使わないショーを削除してください'); return false; } }
+// 共有リンク：ページのアドレスの # のあとにショーのデータを入れる（# のあとはサーバーに送られない）
+const canLink = () => !inClaude && /^https?:$/.test(location.protocol);
+async function shareURL(){ const code = await makeCode(S); return location.origin + location.pathname + '#d=' + (code.startsWith(CODE_HEAD3) ? code : encodeURIComponent(code)); }
+async function shareLink(){
+  const url = await shareURL(), title = S.title || 'ドリルボード';
+  if (navigator.share){ try { await navigator.share({ title, text:`ドリルボードのショー「${title}」`, url }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+  copyText(url, '共有リンクをコピーしました。LINE やメッセージに貼り付けて送ってください');
+}
+// 共有リンクから開いたとき
+async function openFromHash(){
+  const m = /[#&]d=([^&]+)/.exec(location.hash); if (!m) return;
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  let sh; try { sh = await readCode(decodeURIComponent(m[1])); } catch (e) { return toast('リンクのショーを開けませんでした。リンクが途中で切れていないか確かめてください'); }
+  const a = libLoad(), cur = a.find(x => x.id === ui.libId), sig = libSig();
+  const plain = [sampleShow, emptyShow].some(f => { try { return fnv(JSON.stringify(packShow(normalize(f(S.field.type))))) === sig; } catch (e) { return false; } });
+  const keep = !plain && (!cur || cur.sig !== sig);
+  if (!confirm(`共有されたショー「${sh.title}」を開きますか？${keep ? '\\n今のショーはショー一覧に保存します。' : ''}`)) return;
+  let note = ''; if (keep){ const saved = await libSave(false); if (saved) note = `（前のショー「${saved.name}」はショー一覧に保存しました）`; }
+  stop(); pushHist(); S = sh; ui.cur = 0; ui.t = 0; ui.sel.clear(); ui.clip = null; afterLoad(true);
+  await libSave(false);
+  toast(`「${sh.title}」を開きました。ショー一覧にも入れました${note}`);
+}
 function libMeta(){ return { n:S.performers.length, sets:S.sets.length, songs:S.songs.length, sec:Math.round(secAt(total())) }; }
 // 中身が保存したときと同じか（名前の変更も含めて）を見るための印
 const libSig = () => fnv(JSON.stringify(packShow(S)));
@@ -2910,6 +2964,8 @@ document.addEventListener('click', e => {
   }
   else if (a === 'openPending'){ openPending(); }
   else if (a === 'copyJson'){ copyText($('#jsonBox').value, 'データをコピーしました'); }
+  else if (a === 'shareLink'){ shareLink(); }
+  else if (a === 'copyLink'){ shareURL().then(u => copyText(u, '共有リンクをコピーしました。LINE やメッセージに貼り付けて送ってください')); }
   else if (a === 'loadJson'){
     readCode($('#jsonBox').value).then(sh => { pushHist(); S = sh; ui.cur = 0; ui.t = 0; ui.sel.clear(); ui.clip = null; afterLoad(true); $('#fileModal').hidden = true; toast('読み込みました'); })
       .catch(() => toast('読み込めませんでした。データ全体が貼り付けられているか確かめてください'));
@@ -3318,6 +3374,8 @@ async function initShare(){
   renderSyncChip();
 }
 initShare();
+if (canLink()){ document.body.classList.add('can-link'); openFromHash(); }
+window.addEventListener('hashchange', () => { if (canLink()) openFromHash(); });
 $('#bSync').onclick = () => { renderSyncBody(); $('#syncModal').hidden = false; };
 $('#bLib').onclick = () => { renderLib(); $('#libModal').hidden = false; };
 $('#libModal').addEventListener('click', e => { if (e.target.id === 'libModal') $('#libModal').hidden = true; });
@@ -3393,7 +3451,8 @@ S = loadSaved() || normalize(sampleShow('football'));
 ui.t = tl()[0].arrive;
 new ResizeObserver(resize).observe(wrap);
 { let tw0 = 0; new ResizeObserver(() => { const w = $('#timeline').clientWidth; if (Math.abs(w - tw0) > 4){ tw0 = w; renderTimeline(); } }).observe($('#timeline')); }
-let savedMode = 'edit'; try { savedMode = localStorage.getItem(LSKEY + '.mode') || 'edit'; ui.avOff = clamp(+localStorage.getItem(LSKEY + '.avoff') || 0, -1000, 1000); } catch (e) {}
+// スマホで初めて開いたときは、見るためのビューモードから
+let savedMode = 'edit'; try { savedMode = localStorage.getItem(LSKEY + '.mode') || (window.matchMedia && matchMedia('(max-width: 700px)').matches ? 'view' : 'edit'); ui.avOff = clamp(+localStorage.getItem(LSKEY + '.avoff') || 0, -1000, 1000); } catch (e) {}
 try { const lc = localStorage.getItem(LSKEY + '.libcur'); if (lc && libLoad().some(x => x.id === lc)) ui.libId = lc; } catch (e) {}
 renderTop(); renderSongbar(); renderTimeline(); setMode(savedMode); resize();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);

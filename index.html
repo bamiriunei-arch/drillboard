@@ -125,6 +125,10 @@ input[type=number]{font-family:var(--mono);width:4.4em}
 .pchips{display:flex;flex-wrap:wrap;gap:4px}
 .pchip{font-family:var(--mono);font-size:12px;padding:2px 8px;border-radius:5px}
 .pchip.on{background:var(--accent-soft);border-color:var(--accent)}
+.swatch{width:22px;height:18px;padding:0;border:1px solid var(--line);border-radius:4px;background:none;cursor:pointer;flex:none}
+.swatch::-webkit-color-swatch-wrapper{padding:1px}.swatch::-webkit-color-swatch{border:none;border-radius:3px}
+#pColor{width:40px;height:26px;padding:0 2px;cursor:pointer}
+button.mini{padding:0 6px;font-size:11px}
 .selbar{background:var(--surface2);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px}
 .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
 table{border-collapse:collapse;width:100%;font-size:12px}
@@ -419,6 +423,10 @@ function secOptions(sel, noDM){
     return ss.length ? `<optgroup label="${f}">${ss.map(x => `<option value="${x.k}" ${x.k === sel ? 'selected' : ''}>${x.n}</option>`).join('')}</optgroup>` : ''; }).join('');
 }
 const secOf = k => SECTIONS.find(s => s.k === k) || SECTIONS[SECTIONS.length - 1];
+// 色：人ごとの色 → パートの色（変えていれば） → パートの決まった色
+const HEX = /^#[0-9a-f]{6}$/i;
+const partColor = k => (S && S.partColors && S.partColors[k]) || secOf(k).c;
+const colorOf = p => (p && p.c) || partColor(p.sec);
 const LSKEY = 'drillboard.v1';
 const MAX_P = 100, MAX_DM = 3, MAX_COUNTS = 720; // 720カウント＝♩=60で12分
 const POD_W = 0.9, POD_D = 0.95; // 指揮台 横90cm・縦95cm
@@ -561,7 +569,8 @@ function normalize(sh){
   if (!Array.isArray(sh.songs) || !sh.songs.length) sh.songs = [{ name:'1曲目', bpm:+sh.bpm || 120, meter:sh.meter, off:+sh.audioOffset || 0 }];
   sh.bpm = +sh.bpm || 120; sh.audioOffset = +sh.audioOffset || 0; sh.title = sh.title || '新しいショー';
   if (!sh.sets.length) sh.sets.push({ name:'Set 1', counts:0, hold:0, bpm:null, pos:{} });
-  sh.performers.forEach(p => { p.id = String(p.id); p.label = String(p.label ?? p.id); if (!SECTIONS.some(s => s.k === p.sec)) p.sec = 'Ot'; });
+  sh.performers.forEach(p => { p.id = String(p.id); p.label = String(p.label ?? p.id); if (!SECTIONS.some(s => s.k === p.sec)) p.sec = 'Ot'; if (typeof p.c === 'string' && HEX.test(p.c) && p.sec !== 'DM') p.c = p.c.toLowerCase(); else delete p.c; });
+  if (sh.partColors && typeof sh.partColors === 'object'){ for (const k in sh.partColors){ const v = sh.partColors[k]; if (k === 'DM' || !SECTIONS.some(x => x.k === k) || typeof v !== 'string' || !HEX.test(v) || v.toLowerCase() === secOf(k).c.toLowerCase()) delete sh.partColors[k]; else sh.partColors[k] = v.toLowerCase(); } if (!Object.keys(sh.partColors).length) delete sh.partColors; } else delete sh.partColors;
   sh.sets.forEach((s, i) => {
     s.name = s.name || 'Set ' + (i + 1); s.counts = i === 0 ? 0 : Math.max(0, +s.counts || 0); s.hold = Math.max(0, +s.hold || 0);
     s.bpm = +s.bpm || null; s.pos = s.pos || {};
@@ -615,10 +624,11 @@ function packShow(sh){
   if (sh.snap !== 1) c.sn = sh.snap; if (sh.freeStride) c.fs = 1; if (sh.turnDur !== 1) c.u = sh.turnDur; if (sh.maxN !== 8) c.x = sh.maxN;
   const au = sh.auto || {}; if (au.on === false) c.ao = 0; if (au.maxAdd != null && au.maxAdd !== 8) c.am = au.maxAdd; if (au.byBar === false) c.ab = 0;
   const off = DISP_KEYS.filter(k => sh.display && sh.display[k] === false); if (off.length) c.dh = off;
+  if (sh.partColors && Object.keys(sh.partColors).length) c.pc = Object.assign({}, sh.partColors);
   if (Object.keys(c).length) o.c = c;
   o.g = sh.songs.map(g => { const a = [g.name, g.bpm, g.meter, g.off, g.bar0 != null ? g.bar0 : 1], d = [null, null, 4, 0, 1]; while (a.length > 2 && a[a.length - 1] === d[a.length - 1]) a.pop(); return a; });
   const cnt = {};
-  o.p = sh.performers.map(p => { cnt[p.sec] = (cnt[p.sec] || 0) + 1; const def = p.sec === 'DM' ? (cnt.DM === 1 ? 'DM' : 'DM' + cnt.DM) : p.sec + cnt[p.sec]; return p.label === def ? p.sec : [p.sec, p.label]; });
+  o.p = sh.performers.map(p => { cnt[p.sec] = (cnt[p.sec] || 0) + 1; const def = p.sec === 'DM' ? (cnt.DM === 1 ? 'DM' : 'DM' + cnt.DM) : p.sec + cnt[p.sec]; if (p.c) return [p.sec, p.label === def ? 0 : p.label, p.c]; return p.label === def ? p.sec : [p.sec, p.label]; });
   // 全員の位置がそろって割り切れる数（メモリの上なら 1歩＝8 など）で割って、数字を小さくする
   const gcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b){ [a, b] = [b, a % b]; } return a; };
   let Q = 0; sh.sets.forEach(st => ids.forEach(id => { const q = st.pos[id] || [0, 0]; for (let j = 0; j < 2; j++) if (onU(q[j])) Q = gcd(Q, UQ(q[j])); }));
@@ -651,11 +661,11 @@ function packShow(sh){
 function unpackV3(o){
   const f0 = o.f || {}, field = Object.assign({}, DEF_FIELD, f0, { podium:{ show:f0.ps !== 0, gap:f0.pg != null ? f0.pg : 1.5 } }); delete field.ps; delete field.pg;
   const U = STEP_OF(field) / 8 * (o.q || 1), c = o.c || {}, cnt = {};
-  const perf = (o.p || []).map((q, i) => { const sec = Array.isArray(q) ? q[0] : q; cnt[sec] = (cnt[sec] || 0) + 1; const def = sec === 'DM' ? (cnt.DM === 1 ? 'DM' : 'DM' + cnt.DM) : sec + cnt[sec]; return { id:'p' + (i + 1), sec, label:Array.isArray(q) ? q[1] : def }; });
+  const perf = (o.p || []).map((q, i) => { const sec = Array.isArray(q) ? q[0] : q; cnt[sec] = (cnt[sec] || 0) + 1; const def = sec === 'DM' ? (cnt.DM === 1 ? 'DM' : 'DM' + cnt.DM) : sec + cnt[sec]; const r = { id:'p' + (i + 1), sec, label:Array.isArray(q) && typeof q[1] === 'string' ? q[1] : def }; if (Array.isArray(q) && q[2]) r.c = q[2]; return r; });
   const ids = perf.map(p => p.id);
   const disp = {}; DISP_KEYS.forEach(k => disp[k] = !(c.dh || []).includes(k));
   const sh = { v:1, title:o.t, field, snap:c.sn != null ? c.sn : 1, freeStride:!!c.fs, turnDur:c.u != null ? c.u : 1, maxN:c.x || 8,
-    auto:{ on:c.ao !== 0, maxAdd:c.am != null ? c.am : 8, byBar:c.ab !== 0 }, display:disp,
+    auto:{ on:c.ao !== 0, maxAdd:c.am != null ? c.am : 8, byBar:c.ab !== 0 }, display:disp, ...(c.pc ? { partColors:Object.assign({}, c.pc) } : {}),
     songs:(o.g || []).map(a => ({ name:a[0], bpm:a[1], meter:a[2] != null ? a[2] : 4, off:a[3] || 0, bar0:a[4] != null ? a[4] : 1 })),
     performers:perf, sets:[] };
   let prev = null; const inSong = {};
@@ -782,6 +792,8 @@ function afterLoad(refit){
   if (ui.focus && !ids.has(ui.focus)) ui.focus = null;
   if (refit) fit();
   changed(true);
+  // 曲名の並びなどで画面の高さが変わることがあるので、描き直したあとでもう一度全体を合わせる
+  if (refit) requestAnimationFrame(() => requestAnimationFrame(() => { fit(); render(); }));
 }
 function changed(full){ ui.ver++; applyAllFTL(); save(); if (full){ renderTop(); renderSongbar(); renderSide(); renderTimeline(); } render(); }
 
@@ -1489,12 +1501,12 @@ function render(){
       c.beginPath(); c.moveTo(sx, sy - rr); c.lineTo(sx + rr, sy); c.lineTo(sx, sy + rr); c.lineTo(sx - rr, sy); c.closePath();
       c.fillStyle = '#FFFFFF'; c.fill(); c.lineWidth = 2.2; c.strokeStyle = '#B8860B'; c.stroke();
     } else {
-      c.beginPath(); c.arc(sx, sy, r, 0, Math.PI * 2); c.fillStyle = sec.c; c.fill(); c.lineWidth = 1.4; c.strokeStyle = 'rgba(10,14,20,.75)'; c.stroke();
+      c.beginPath(); c.arc(sx, sy, r, 0, Math.PI * 2); c.fillStyle = colorOf(p); c.fill(); c.lineWidth = 1.4; c.strokeStyle = 'rgba(10,14,20,.75)'; c.stroke();
     }
     if (showLbl){
       let fs = Math.round(r * 0.78); c.font = `600 ${fs}px ${cssMono}`;
       const w = c.measureText(p.label).width; if (w > r * 1.8){ fs = Math.max(7, Math.floor(fs * r * 1.8 / w)); c.font = `600 ${fs}px ${cssMono}`; }
-      c.fillStyle = lum(sec.c) > 0.6 ? '#111' : '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(p.label, sx, sy + 0.5);
+      c.fillStyle = lum(colorOf(p)) > 0.6 ? '#111' : '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(p.label, sx, sy + 0.5);
     } else if (showSmall){
       c.font = `600 10px ${cssMono}`; c.textAlign = 'center'; c.textBaseline = 'bottom';
       c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,.6)'; c.strokeText(p.label, sx, sy - rr - 2); c.fillStyle = '#fff'; c.fillText(p.label, sx, sy - rr - 2);
@@ -1749,6 +1761,22 @@ function pasteDup(){
   });
   ui.sel = new Set(newIds); changed(true);
   toast(`${use.length}人を複製しました（全セットで元の人と同じ動き）${skipped ? `。上限のため${skipped}人は複製していません` : ''}`);
+}
+// 選んだ人のパートを変える。「Tp3」のような番号だけの名前は新しいパートの番号に付け直す（名前を付けた人はそのまま）
+function changeParts(ids, to, renum){
+  const ps = ids.map(id => S.performers.find(x => x.id === id)).filter(p => p && p.sec !== to);
+  if (!ps.length) return toast('すでにそのパートです');
+  if (to === 'DM'){ const room = MAX_DM - countDM(); if (ps.length > room) return toast(`ドラムメジャーは最大${MAX_DM}人までです（あと${room}人）`); }
+  else { const back = ps.filter(isDM).length, room = MAX_P - countP(); if (back > room) return toast(`隊員は最大${MAX_P}人までです`); }
+  ui.renum = renum; pushHist();
+  const numOf = (p, k) => { if (k === 'DM') return p.label === 'DM' ? 1 : (/^DM(\d+)$/.exec(p.label) || [])[1] * 1 || 0; const m = new RegExp('^' + k + '(\\d+)$').exec(p.label); return m ? +m[1] : 0; };
+  let next = Math.max(0, ...S.performers.filter(p => p.sec === to).map(p => numOf(p, to))) + 1, renamed = 0;
+  ps.forEach(p => {
+    if (renum && numOf(p, p.sec)){ p.label = to === 'DM' ? (next === 1 ? 'DM' : 'DM' + next) : to + next; next++; renamed++; }
+    p.sec = to; if (to === 'DM') delete p.c;
+  });
+  changed(true);
+  toast(`${ps.length}人を${secOf(to).n}にしました${renamed ? `（${renamed}人の名前を付け直し）` : ''}`);
 }
 function pastePos(){
   if (!ui.clip) return toast('先に人を選んでコピーしてください');
@@ -2194,8 +2222,14 @@ function perfHTML(){
   const ids = selIds();
   if (ids.length){
     h += `<div class="selbar"><div class="row"><b>選択 ${ids.length}人</b><button data-act="selNone">選択解除</button>${ed ? '<button data-act="delPerf" class="danger">隊員を削除</button>' : ''}</div>`;
-    if (ed && ids.length === 1){ const p = S.performers.find(x => x.id === ids[0]);
-      h += `<div class="row"><input type="text" id="relabel" value="${esc(p.label)}" style="width:7em" aria-label="名前"><select id="resec" aria-label="パート">${secOptions(p.sec, false)}</select><button data-act="relabel">変更</button></div>`; }
+    if (ed){
+      const ps = ids.map(id => S.performers.find(x => x.id === id)).filter(Boolean), secs = [...new Set(ps.map(p => p.sec))], one = ps.length === 1 ? ps[0] : null;
+      const nonDM = ps.filter(p => !isDM(p)), cols = [...new Set(nonDM.map(colorOf))], own = nonDM.filter(p => p.c).length;
+      if (one) h += `<div class="row"><span class="note">名前</span><input type="text" id="relabel" value="${esc(one.label)}" style="width:8em" aria-label="名前"><button data-act="relabel">名前を変更</button></div>`;
+      h += `<div class="row"><span class="note">パート</span><select id="resecMany" aria-label="パート">${secOptions(secs.length === 1 ? secs[0] : '', false)}</select><button data-act="resecMany">${one ? '' : ps.length + '人の'}パートを変更</button></div>
+        <label class="row" style="flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" id="renumChk" ${ui.renum === false ? '' : 'checked'} style="margin-top:3px"><span class="note" style="flex:1">「Tp3」のような番号だけの名前は、新しいパートの番号に付け直す</span></label>`;
+      if (nonDM.length) h += `<div class="row"><span class="note">色</span><input type="color" id="pColor" value="${cols.length === 1 ? cols[0] : colorOf(nonDM[0])}" aria-label="選んだ人の色">${cols.length > 1 ? '<span class="note">（人によって違う）</span>' : ''}${own ? `<button data-act="pColorReset">パートの色に戻す</button>` : '<span class="note">この人たちだけ色を変えます</span>'}</div>`;
+    }
     h += `</div>`;
   } else h += `<div class="row"><button data-act="selAll">全員を選択</button><button data-act="copyRoster">隊員一覧をコピー</button></div>`;
   FAMILIES.forEach(f => {
@@ -2204,8 +2238,9 @@ function perfHTML(){
     h += `<div class="fam"><div class="fhead"><b>${f}</b><small>${n}人</small><button data-act="selFam" data-fam="${f}">${f}をまとめて選択</button></div>`;
     secs.forEach(s => {
       const ps = S.performers.filter(p => p.sec === s.k); if (!ps.length) return;
-      h += `<div class="group"><div class="ghead"><span class="dot" style="background:${s.c}"></span>${s.n} · ${ps.length}人 <button data-act="selSec" data-sec="${s.k}" style="margin-left:auto;padding:1px 8px;font-size:11px">パートを選択</button></div><div class="pchips">`;
-      ps.forEach(p => h += `<button class="pchip ${ui.sel.has(p.id) ? 'on' : ''}" data-act="pick" data-id="${esc(p.id)}">${esc(p.label)}</button>`);
+      const pc = partColor(s.k), changedC = !!(S.partColors && S.partColors[s.k]);
+      h += `<div class="group"><div class="ghead">${ed ? `<input type="color" class="swatch" data-pcolor="${s.k}" value="${pc}" title="${esc(s.n)}の色を変える" aria-label="${esc(s.n)}の色">` : `<span class="dot" style="background:${pc}"></span>`}${s.n} · ${ps.length}人${ed && changedC ? ` <button data-act="partColorReset" data-sec="${s.k}" class="mini" title="元の色に戻す">元の色</button>` : ''} <button data-act="selSec" data-sec="${s.k}" style="margin-left:auto;padding:1px 8px;font-size:11px">パートを選択</button></div><div class="pchips">`;
+      ps.forEach(p => h += `<button class="pchip ${ui.sel.has(p.id) ? 'on' : ''}" data-act="pick" data-id="${esc(p.id)}" style="box-shadow:inset 3px 0 0 ${colorOf(p)}">${esc(p.label)}</button>`);
       h += `</div></div>`;
     });
     h += `</div>`;
@@ -2217,7 +2252,7 @@ function dotHTML(){
   const id = ui.focus && S.performers.some(p => p.id === ui.focus) ? ui.focus : S.performers[0].id; ui.focus = id;
   const p = S.performers.find(x => x.id === id);
   let h = `<h2>ドットシート</h2>
-  <div class="row"><span class="dot" style="background:${secOf(p.sec).c}"></span><select id="focusSel" aria-label="隊員">${S.performers.map(q => `<option value="${esc(q.id)}" ${q.id === id ? 'selected' : ''}>${esc(q.label)}（${secOf(q.sec).n}）</option>`).join('')}</select></div>
+  <div class="row"><span class="dot" style="background:${colorOf(p)}"></span><select id="focusSel" aria-label="隊員">${S.performers.map(q => `<option value="${esc(q.id)}" ${q.id === id ? 'selected' : ''}>${esc(q.label)}（${secOf(q.sec).n}）</option>`).join('')}</select></div>
   <p class="note">フィールド上の隊員をクリックしても切り替わります。線はこの人の動線、数字はセット番号です。${S.field.type === 'football' ? '1歩＝22.5インチ（8 to 5）。S1は客席から見て左側。' : `1歩＝${S.field.stepCm}cm。左右は客席から見た向き。`}</p>
   <div class="tablewrap"><table><thead><tr><th>セット</th><th>移動</th><th>左右</th><th>前後</th><th>歩幅</th></tr></thead><tbody>`;
   let lastSg = -1;
@@ -2296,12 +2331,23 @@ pane.addEventListener('click', e => {
 pane.addEventListener('focusin', e => {
   const row = e.target.closest('.set-row[data-set]'); if (row && +row.dataset.set !== ui.cur){ ui.cur = +row.dataset.set; stop(); ui.t = tl()[ui.cur].arrive; highlightSet(); render(); }
 });
+let colorEdit = null;
+function applyColorInput(t){
+  const v = String(t.value).toLowerCase(); if (!HEX.test(v)) return;
+  if (!colorEdit || colorEdit.el !== t){ pushHist(); colorEdit = { el:t }; }
+  if (t.dataset.pcolor){ const k = t.dataset.pcolor; S.partColors = S.partColors || {}; if (v === secOf(k).c.toLowerCase()) delete S.partColors[k]; else S.partColors[k] = v; if (!Object.keys(S.partColors).length) delete S.partColors; }
+  else selIds().forEach(id => { const p = S.performers.find(x => x.id === id); if (p && !isDM(p)) p.c = v; });
+  ui.ver++; save(); render();
+}
 pane.addEventListener('input', e => {
+  if (e.target.type === 'color' && (e.target.id === 'pColor' || e.target.dataset.pcolor)){ applyColorInput(e.target); return; }
   if (e.target.id === 'rosterIn'){ ui.rosterText = e.target.value; const pv = $('#rosterPrev'); if (pv) pv.textContent = rosterPreview(); }
 });
 pane.addEventListener('toggle', e => { if (e.target.id === 'rosterBox') ui.rosterOpen = e.target.open; }, true);
 pane.addEventListener('change', e => {
   const t = e.target, row = t.closest('.set-row[data-set]');
+  if (t.type === 'color' && (t.id === 'pColor' || t.dataset.pcolor)){ applyColorInput(t); colorEdit = null; changed(true); return; }
+  if (t.id === 'renumChk'){ ui.renum = t.checked; return; }
   if (t.id === 'rosterSec'){ ui.rosterSec = t.value; const pv = $('#rosterPrev'); if (pv) pv.textContent = rosterPreview(); return; }
   if (t.id === 'rosterIn') return;
   if (t.id === 'addSec'){ ui.addSec = t.value; return; }
@@ -2582,11 +2628,12 @@ document.addEventListener('click', e => {
     S.performers = S.performers.filter(p => !ids.has(p.id)); S.sets.forEach(s => ids.forEach(id => { delete s.pos[id]; if (s.pat) delete s.pat[id]; if (s.tm) delete s.tm[id]; if (s.wp) delete s.wp[id]; if (s.face) delete s.face[id]; if (s.mv) delete s.mv[id]; if (s.turns) delete s.turns[id]; if (s.freeIds) delete s.freeIds[id]; if (s.ftl){ s.ftl.forEach(g => g.ids = g.ids.filter(x => x !== id)); s.ftl = s.ftl.filter(g => g.ids.length >= 2); if (!s.ftl.length) delete s.ftl; } }));
     ui.sel.clear(); changed(true);
   } else if (a === 'relabel'){
-    const id = selIds()[0], p = S.performers.find(x => x.id === id); if (!p) return; pushHist();
-    const ns = $('#resec').value;
-    if (ns === 'DM' && !isDM(p) && countDM() >= MAX_DM){ hist.pop(); return toast(`ドラムメジャーは最大${MAX_DM}人までです`); }
-    if (ns !== 'DM' && isDM(p) && countP() >= MAX_P){ hist.pop(); return toast(`隊員は最大${MAX_P}人までです`); }
-    p.label = $('#relabel').value.trim() || p.label; p.sec = ns; changed(true);
+    const id = selIds()[0], p = S.performers.find(x => x.id === id); if (!p) return;
+    const v = $('#relabel').value.trim(); if (!v || v === p.label) return;
+    pushHist(); p.label = v.slice(0, 20); changed(true); toast(`名前を「${p.label}」にしました`);
+  } else if (a === 'resecMany'){ changeParts(selIds(), $('#resecMany').value, $('#renumChk') ? $('#renumChk').checked : true);
+  } else if (a === 'pColorReset'){ const ps = selIds().map(id => S.performers.find(x => x.id === id)).filter(p => p && p.c); if (!ps.length) return; pushHist(); ps.forEach(p => delete p.c); changed(true); toast(`${ps.length}人をパートの色に戻しました`);
+  } else if (a === 'partColorReset'){ const k = b.dataset.sec; if (!S.partColors || !S.partColors[k]) return; pushHist(); delete S.partColors[k]; if (!Object.keys(S.partColors).length) delete S.partColors; changed(true); toast(`${secOf(k).n}を元の色に戻しました`);
   } else if (a === 'pick'){
     const id = b.dataset.id; if (e.shiftKey || e.metaKey || e.ctrlKey){ ui.sel.has(id) ? ui.sel.delete(id) : ui.sel.add(id); } else ui.sel = new Set([id]);
     ui.focus = id; renderSide(); render();

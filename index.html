@@ -190,6 +190,8 @@ body.no-dl .dl-only{display:none!important}
 body:not(.has-room) .room-only{display:none!important}
 .recbar{height:10px;border-radius:6px;background:var(--surface2);overflow:hidden;border:1px solid var(--line)}
 .recbar i{display:block;height:100%;width:0;background:var(--accent)}
+.rotbox summary{cursor:pointer;list-style-position:inside}
+.rotbox[open] summary{margin-bottom:6px}
 .syncchip{font-size:12px;padding:3px 8px;border-radius:6px;background:var(--accent-soft);border:1px solid var(--accent)}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:13px;z-index:30;transition:opacity .2s}
 .toast[hidden]{display:none}
@@ -247,7 +249,9 @@ body:not(.has-room) .room-only{display:none!important}
           <button data-tool="hline" title="横一列に並べる">横一列</button>
           <button data-tool="vline" title="縦一列に並べる">縦一列</button>
           <button data-tool="arc" title="客席側にふくらむ弧">弧</button>
-          <button data-tool="circle">円</button>
+          <button data-tool="semi" title="半円に並べる（直径を指定できます）">半円</button>
+          <button data-tool="fan" title="扇形に並べる（直径・角度を指定できます）">扇形</button>
+          <button data-tool="circle" title="円に並べる（直径を指定できます）">円</button>
           <button data-tool="block" title="列数を指定してブロック">ブロック</button>
           <button data-tool="wedge" title="客席に向いたV字">V字</button>
           <button data-tool="even" title="両端はそのままで等間隔に">等間隔</button>
@@ -257,8 +261,11 @@ body:not(.has-room) .room-only{display:none!important}
           <button data-move="line" title="前のセットからまっすぐ移動">直線</button>
           <button data-move="semi-cw" title="半円を描いて移動（右回り）">半円↻</button>
           <button data-move="semi-ccw" title="半円を描いて移動（左回り）">半円↺</button>
+          <button data-move="quarter-cw" title="90°の弧を描いて移動（右回り）">90°↻</button>
+          <button data-move="quarter-ccw" title="90°の弧を描いて移動（左回り）">90°↺</button>
           <button data-move="circle-cw" title="グループの中心のまわりを回って移動（右回り）。位置が同じなら1周します">円↻</button>
           <button data-move="circle-ccw" title="グループの中心のまわりを回って移動（左回り）。位置が同じなら1周します">円↺</button>
+          <button id="bRot" title="中心を決めて、隊形ごと円で回す（右のパネルが開きます）">中心で回す…</button>
         </div>
         <div class="tgroup edit-only" id="xformTools">
           <span class="tlabel">変形</span>
@@ -273,6 +280,8 @@ body:not(.has-room) .room-only{display:none!important}
         <div class="tgroup edit-only">
           <label>間隔<input id="optSp" type="number" value="2" step="0.5" min="0.5">歩</label>
           <label>列数<input id="optCols" type="number" value="5" min="1" step="1"></label>
+          <label title="「円」で並べるときの直径。空欄なら間隔から自動で決めます">円の直径<input id="optDia" type="number" min="0" max="200" step="1" placeholder="自動" style="width:4.4em">歩<span class="note mono" id="optDiaM"></span></label>
+          <label title="「扇形」の開く角度">扇の角度<input id="optFan" type="number" value="90" min="20" max="360" step="5" style="width:4em">°</label>
           <label>立ち位置<select id="snap"><option value="1">メモリ（1歩）</option><option value="0.5">メモリ（半歩）</option><option value="0">free</option></select></label>
           <button id="bSnapAll" title="今のセットの全員を、いちばん近いメモリの上に合わせる">メモリに合わせる</button>
         </div>
@@ -437,7 +446,7 @@ const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const lerp = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
 
 let S = null;
-const ui = { avOff:0, playT0:0, nextClick:0, faceWhen:'arrive', faceKv:1, dirAll:false, dirRange:'set', setClip:null, playAll:false, audios:[], playSong:-1, addSec:'Tp', clip:null, rosterText:'', rosterOpen:false, rosterSec:'Tp', mode:'edit', t:0, cur:0, sel:new Set(), focus:null, tab:'sets', snap:1, paths:true, pan:false, solo:false, freezeT:0,
+const ui = { rotMode:'sel', rotPt:null, rotDeg:90, rotDir:-1, rotPicking:false, avOff:0, playT0:0, nextClick:0, faceWhen:'arrive', faceKv:1, dirAll:false, dirRange:'set', setClip:null, playAll:false, audios:[], playSong:-1, addSec:'Tp', clip:null, rosterText:'', rosterOpen:false, rosterSec:'Tp', mode:'edit', t:0, cur:0, sel:new Set(), focus:null, tab:'sets', snap:1, paths:true, pan:false, solo:false, freezeT:0,
   playing:false, metro:true, loop:false, drag:null, band:null, ver:0 };
 const hist = [], redoStack = [];
 const view = { scale:8, ox:0, oy:0 };
@@ -457,6 +466,12 @@ const fmtNum = (v, d = 2) => { const s = v.toFixed(d); return s.replace(/\.?0+$/
 const fmtSteps = v => fmtNum(Math.round(v * 4) / 4, 2);
 
 /* ---------- 形を作る ---------- */
+// 形の点 pts を、order の順の人に割り当て、全体の重心を今の重心に合わせる
+function placeShape(ids, pos, pts, order){
+  const c = centroid(ids, pos), m = pts.reduce((a, q) => [a[0] + q[0] / pts.length, a[1] + q[1] / pts.length], [0, 0]), r = {};
+  order.forEach((id, k) => { if (pts[k]) r[id] = [c[0] + pts[k][0] - m[0], c[1] + pts[k][1] - m[1]]; });
+  return r;
+}
 function centroid(ids, pos){ let x = 0, y = 0; ids.forEach(id => { x += pos[id][0]; y += pos[id][1]; }); return [x / ids.length, y / ids.length]; }
 function lineShape(ids, pos, sp, deg){
   const [cx, cy] = centroid(ids, pos), a = deg * Math.PI / 180, dx = Math.cos(a), dy = Math.sin(a);
@@ -477,11 +492,38 @@ const SHAPES = {
     const r = {}; s.forEach((id, i) => r[id] = [cx + pts[i][0] - m[0], cy + pts[i][1] - m[1]]); return r;
   },
   circle(ids, pos, o){
-    const [cx, cy] = centroid(ids, pos), n = ids.length, R = Math.max(o.sp, n * o.sp / (2 * Math.PI));
+    const [cx, cy] = centroid(ids, pos), n = ids.length, R = o.dia > 0 ? o.dia / 2 : Math.max(o.sp, n * o.sp / (2 * Math.PI));
     const ang = id => Math.atan2(pos[id][1] - cy, pos[id][0] - cx);
     const s = [...ids].sort((p, q) => ang(p) - ang(q)), a0 = ang(s[0]), r = {};
     s.forEach((id, i) => { const a = a0 + 2 * Math.PI * i / n; r[id] = [cx + R*Math.cos(a), cy + R*Math.sin(a)]; });
     return r;
+  },
+  // 半円：中心が客席側、弧が後ろ側（客席から見て内側が見える向き）。左の人から順に弧の上へ
+  semi(ids, pos, o){
+    const n = ids.length, R = o.dia > 0 ? o.dia / 2 : Math.max(o.sp, (n - 1) * o.sp / Math.PI);
+    const pts = []; for (let j = 0; j < n; j++){ const a = n === 1 ? Math.PI / 2 : Math.PI - Math.PI * j / (n - 1); pts.push([R * Math.cos(a), R * Math.sin(a)]); }
+    return placeShape(ids, pos, pts, [...ids].sort((p, q) => pos[p][0] - pos[q][0]));
+  },
+  // 扇形：要（かなめ）が客席側、後ろへ広がる。外側の弧から内側へ、弧ごとに間隔がそろうように人数を割り振る
+  fan(ids, pos, o){
+    const n = ids.length, th = clamp(o.fan || 90, 20, 360) * Math.PI / 180, full = th > 2 * Math.PI - 1e-3;
+    const cap = (R, sp) => { const rows = []; for (let r = R; r >= sp * 0.5 - 1e-9; r -= sp) rows.push({ r, c:full ? Math.max(1, Math.floor(r * th / sp)) : Math.floor(r * th / sp) + 1 }); return rows; };
+    let sp = o.sp, R = o.dia > 0 ? o.dia / 2 : 0, rows;
+    const sum = rs => rs.reduce((a, x) => a + x.c, 0);
+    if (R > 0){
+      rows = cap(R, sp);
+      for (let k = 0; k < 60 && sum(rows) < n; k++){ sp *= 0.9; rows = cap(R, sp); }  // 入りきらない：間隔を詰める
+      for (let k = 0; k < 80; k++){ const s2 = sp * 1.06, r2 = cap(R, s2); if (sum(r2) >= n){ sp = s2; rows = r2; } else break; }  // 余る：まんべんなく広げる
+    }
+    else { R = sp; rows = cap(R, sp); while (rows.reduce((a, x) => a + x.c, 0) < n && R < 400) { R += sp; rows = cap(R, sp); } }
+    const tot = rows.reduce((a, x) => a + x.c, 0), want = rows.map(x => x.c * n / tot), cnt = want.map(Math.floor);
+    let left = n - cnt.reduce((a, b) => a + b, 0); want.map((w, k) => [w - cnt[k], k]).sort((a, b) => b[0] - a[0]).forEach(([, k]) => { if (left > 0 && cnt[k] < rows[k].c){ cnt[k]++; left--; } });
+    const pts = [], order = [], byY = [...ids].sort((p, q) => pos[q][1] - pos[p][1]); let used = 0;
+    rows.forEach((row, k) => {
+      const m = cnt[k]; if (!m) return; const grp = byY.slice(used, used + m).sort((p, q) => pos[p][0] - pos[q][0]); used += m;
+      for (let j = 0; j < m; j++){ const a = Math.PI / 2 + th / 2 - (m === 1 ? th / 2 : full ? th * j / m : th * j / (m - 1)); pts.push([row.r * Math.cos(a), row.r * Math.sin(a)]); order.push(grp[j]); }
+    });
+    const res = placeShape(ids, pos, pts, order); res.__info = { R, sp, rows:cnt.filter(Boolean).length, th:th * 180 / Math.PI }; return res;
   },
   block(ids, pos, o){
     const [cx, cy] = centroid(ids, pos), n = ids.length, cols = clamp(o.cols | 0 || 4, 1, n), rows = Math.ceil(n / cols);
@@ -574,7 +616,7 @@ function normalize(sh){
   sh.sets.forEach((s, i) => {
     s.name = s.name || 'Set ' + (i + 1); s.counts = i === 0 ? 0 : Math.max(0, +s.counts || 0); s.hold = Math.max(0, +s.hold || 0);
     s.bpm = +s.bpm || null; s.pos = s.pos || {};
-    if (s.pat && typeof s.pat === 'object'){ for (const k in s.pat){ const q = s.pat[k]; if (!q || !['semi', 'circle'].includes(q.t) || i === 0) delete s.pat[k]; else { q.d = q.d < 0 ? -1 : 1; if (q.t === 'circle' && !(Array.isArray(q.c) && isFinite(q.c[0]) && isFinite(q.c[1]))) q.c = [0, 0]; } } } else delete s.pat;
+    if (s.pat && typeof s.pat === 'object'){ for (const k in s.pat){ const q = s.pat[k]; if (!q || !['semi', 'circle', 'quarter'].includes(q.t) || i === 0) delete s.pat[k]; else { q.d = q.d < 0 ? -1 : 1; if (q.t === 'circle' && !(Array.isArray(q.c) && isFinite(q.c[0]) && isFinite(q.c[1]))) q.c = [0, 0]; } } } else delete s.pat;
     if (i === 0 || !s.free) delete s.free; else s.free = true;
     if (s.rm != null && String(s.rm).trim()) s.rm = String(s.rm).trim().slice(0, 10); else delete s.rm;
     if (s.bar != null && s.bar !== '' && Number.isFinite(+s.bar)) s.bar = Math.round(+s.bar); else delete s.bar;
@@ -642,7 +684,7 @@ function packShow(sh){
     if (enc.every(v => v === 0)) enc = 0;
     const base = st.base == null || st.base === (+st.counts || 0) ? -1 : st.base;
     const row = [st.name === 'Set ' + inSong[st.sg] ? '' : st.name, +st.counts || 0, +st.hold || 0, +st.bpm || 0, base, enc];
-    const pats = st.pat ? Object.entries(st.pat).filter(([id]) => idx.has(id)).map(([id, q]) => q.t === 'circle' ? [idx.get(id), 2, q.d, MM(q.c[0]), MM(q.c[1])] : [idx.get(id), 1, q.d]) : [];
+    const pats = st.pat ? Object.entries(st.pat).filter(([id]) => idx.has(id)).map(([id, q]) => q.t === 'circle' ? [idx.get(id), 2, q.d, MM(q.c[0]), MM(q.c[1])] : [idx.get(id), q.t === 'quarter' ? 3 : 1, q.d]) : [];
     const tms = st.tm ? Object.entries(st.tm).filter(([id]) => idx.has(id)).map(([id, v]) => [idx.get(id), v[0], v[1]]) : [];
     const wps = st.wp ? Object.entries(st.wp).filter(([id]) => idx.has(id)).flatMap(([id, v]) => v.map(w => [idx.get(id), w[0], MM(w[1]), MM(w[2])])) : [];
     const fcs = st.face ? Object.entries(st.face).filter(([id]) => idx.has(id)).map(([id, v]) => [idx.get(id), v]) : [];
@@ -679,7 +721,7 @@ function unpackV3(o){
     const st = { name:r[0] || 'Set ' + inSong[sg], counts:r[1] || 0, hold:r[2] || 0, bpm:r[3] || null, pos, sg };
     if (r[4] != null && r[4] >= 0) st.base = r[4];
     const id = k => ids[k];
-    if (Array.isArray(r[6])){ st.pat = {}; r[6].forEach(q => { if (id(q[0])) st.pat[id(q[0])] = q[1] === 2 ? { t:'circle', d:q[2], c:[q[3] / 1000, q[4] / 1000] } : { t:'semi', d:q[2] }; }); }
+    if (Array.isArray(r[6])){ st.pat = {}; r[6].forEach(q => { if (id(q[0])) st.pat[id(q[0])] = q[1] === 2 ? { t:'circle', d:q[2], c:[q[3] / 1000, q[4] / 1000] } : { t:q[1] === 3 ? 'quarter' : 'semi', d:q[2] }; }); }
     if (Array.isArray(r[8])){ st.tm = {}; r[8].forEach(q => { if (id(q[0])) st.tm[id(q[0])] = [q[1], q[2]]; }); }
     if (Array.isArray(r[9])){ st.wp = {}; r[9].forEach(q => { if (id(q[0])) (st.wp[id(q[0])] = st.wp[id(q[0])] || []).push([q[1], q[2] / 1000, q[3] / 1000]); }); }
     if (Array.isArray(r[10])){ st.face = {}; r[10].forEach(q => { if (id(q[0])) st.face[id(q[0])] = q[1]; }); }
@@ -702,7 +744,7 @@ function packShowV2(sh){
       const abs = []; ids.forEach(id => { const q = st.pos[id] || [0, 0]; abs.push(MM(q[0]), MM(q[1])); });
       const enc = prev ? abs.map((v, k) => v - prev[k]) : abs; prev = abs;
       const row = [st.name, +st.counts || 0, +st.hold || 0, +st.bpm || 0, st.base == null ? -1 : st.base, enc];
-      const pats = st.pat ? Object.entries(st.pat).filter(([id]) => idx.has(id)).map(([id, q]) => q.t === 'circle' ? [idx.get(id), 2, q.d, MM(q.c[0]), MM(q.c[1])] : [idx.get(id), 1, q.d]) : [];
+      const pats = st.pat ? Object.entries(st.pat).filter(([id]) => idx.has(id)).map(([id, q]) => q.t === 'circle' ? [idx.get(id), 2, q.d, MM(q.c[0]), MM(q.c[1])] : [idx.get(id), q.t === 'quarter' ? 3 : 1, q.d]) : [];
       row.push(pats.length ? pats : 0, st.sg || 0);
       const tms = st.tm ? Object.entries(st.tm).filter(([id]) => idx.has(id)).map(([id, v]) => [idx.get(id), v[0], v[1]]) : [];
       const wps = st.wp ? Object.entries(st.wp).filter(([id]) => idx.has(id)).flatMap(([id, v]) => v.map(w => [idx.get(id), w[0], MM(w[1]), MM(w[2])])) : [];
@@ -739,7 +781,7 @@ function unpackShow(o){
     if (Array.isArray(r[11]) && r[11].length){ st.mv = {}; r[11].forEach(q => { const id = ids[q[0]]; if (id) st.mv[id] = q[1]; }); }
     if (Array.isArray(r[10]) && r[10].length){ st.face = {}; r[10].forEach(q => { const id = ids[q[0]]; if (id) st.face[id] = q[1]; }); }
     if (Array.isArray(r[9]) && r[9].length){ st.wp = {}; r[9].forEach(q => { const id = ids[q[0]]; if (id) (st.wp[id] = st.wp[id] || []).push([q[1], q[2] / 1000, q[3] / 1000]); }); }
-    if (Array.isArray(r[6]) && r[6].length){ st.pat = {}; r[6].forEach(q => { const id = ids[q[0]]; if (id) st.pat[id] = q[1] === 2 ? { t:'circle', d:q[2], c:[q[3] / 1000, q[4] / 1000] } : { t:'semi', d:q[2] }; }); }
+    if (Array.isArray(r[6]) && r[6].length){ st.pat = {}; r[6].forEach(q => { const id = ids[q[0]]; if (id) st.pat[id] = q[1] === 2 ? { t:'circle', d:q[2], c:[q[3] / 1000, q[4] / 1000] } : { t:q[1] === 3 ? 'quarter' : 'semi', d:q[2] }; }); }
     sh.sets.push(st); prev = abs;
   });
   return sh;
@@ -816,7 +858,7 @@ function setCurFromT(){
   const sc = S.sets[ni].sg !== curSong(); ui.cur = ni;
   if (sc){ renderTop(); renderSongbar(); renderSide(); } else highlightSet();
 }
-/* ---------- 動きパターン（直線・半円・円） ---------- */
+/* ---------- 動きパターン（直線・半円・90°・円） ---------- */
 function patOf(i, id){ const s = S.sets[i]; return (s && s.pat && s.pat[id]) || null; }
 function pathPoint(i, id, f){
   const A = S.sets[i - 1].pos[id], B = S.sets[i].pos[id];
@@ -826,6 +868,13 @@ function pathPoint(i, id, f){
     const M = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2], r = dist(A, B) / 2; if (r < 1e-6) return A;
     const a = Math.atan2(A[1] - M[1], A[0] - M[0]) + pt.d * Math.PI * f;
     return [M[0] + r * Math.cos(a), M[1] + r * Math.sin(a)];
+  }
+  if (pt && pt.t === 'quarter'){
+    // 90°の弧：出発点と到着点を見込む角が90°になる円の上を回る（d=1 で左回り）
+    const L = dist(A, B); if (L < 1e-6) return A;
+    const h = L / 2, n = [-(B[1] - A[1]) / L, (B[0] - A[0]) / L], C = [(A[0] + B[0]) / 2 + pt.d * n[0] * h, (A[1] + B[1]) / 2 + pt.d * n[1] * h];
+    const r = Math.SQRT2 * h, a = Math.atan2(A[1] - C[1], A[0] - C[0]) + pt.d * (Math.PI / 2) * f;
+    return [C[0] + r * Math.cos(a), C[1] + r * Math.sin(a)];
   }
   if (pt && pt.t === 'circle'){
     const C = pt.c, rA = dist(A, C), rB = dist(B, C), aA = Math.atan2(A[1] - C[1], A[0] - C[0]), aB = Math.atan2(B[1] - C[1], B[0] - C[0]);
@@ -841,6 +890,7 @@ function pathLen(i, id){
   const A = S.sets[i - 1].pos[id], B = S.sets[i].pos[id], pt = patOf(i, id);
   if (!pt){ if (!ftlLeadOf(i, id)) return dist(A, B); const P = moveSpec(i, id).pts; let L = 0; for (let k = 1; k < P.length; k++) L += dist(P[k - 1][1], P[k][1]); return L; }
   if (pt.t === 'semi') return Math.PI * dist(A, B) / 2;
+  if (pt.t === 'quarter') return Math.SQRT2 * Math.PI * dist(A, B) / 4;
   let L = 0, prev = A; for (let k = 1; k <= 48; k++){ const q = pathPoint(i, id, k / 48); L += dist(prev, q); prev = q; }
   return L;
 }
@@ -982,7 +1032,7 @@ function movePolyline(i, id){
   if (m.pat){ const r = [m.A]; for (let k = 1; k <= 40; k++) r.push(pathPoint(i, id, k / 40)); return r; }
   return m.pts.map(q => q[1]);
 }
-function patName(pt){ return pt ? (pt.t === 'semi' ? '半円' : '円') + (pt.d < 0 ? '↻' : '↺') : ''; }
+function patName(pt){ return pt ? ({ semi:'半円', quarter:'90°', circle:'円' }[pt.t] || '円') + (pt.d < 0 ? '↻' : '↺') : ''; }
 function posAt(t){
   const T = tl(), i = segIdx(t), s = S.sets[i];
   if (i > 0 && t < T[i].arrive){
@@ -1084,9 +1134,10 @@ function autoFix(i, allowPull){
   }
   return (res.to !== res.from || res.pulled.length) ? res : null;
 }
-function autoFixAfterEdit(i, force, prefix){
+function autoFixAfterEdit(i, force, prefix, keepShape){
   if (!S.auto.on && !force){ if (prefix) toast(prefix); return; }
-  const out = [autoFix(i, true), autoFix(i + 1, false)].filter(Boolean);
+  // keepShape：形を作ったときは行き先を縮めない（隊形がくずれるので、カウントを増やすだけにする）
+  const out = [autoFix(i, !keepShape), autoFix(i + 1, false)].filter(Boolean);
   if (!out.length){ if (prefix) toast(prefix); return; }
   ui.t = tl()[ui.cur].arrive; ui.freezeT = ui.t;
   const msg = out.map(r => {
@@ -1485,6 +1536,7 @@ function render(){
   }
   drawDistances(c, P, fb);
   drawWaypoints(c, fb);
+  if (!ui.offscreen) drawRotCenter(c, fb);
   // 隊員
   const hot = hotNow(P);
   const order = [...S.performers].sort((a, b) => (ui.sel.has(a.id) ? 1 : 0) - (ui.sel.has(b.id) ? 1 : 0));
@@ -1603,6 +1655,7 @@ cv.addEventListener('pointerdown', e => {
   cv.setPointerCapture(e.pointerId);
   const [sx, sy] = local(e);
   if (ui.pan || e.button === 1 || e.button === 2){ ui.drag = { mode:'pan', sx, sy, ox:view.ox, oy:view.oy }; cv.style.cursor = 'grabbing'; return; }
+  if (ui.rotPicking && ui.mode === 'edit'){ ui.rotPt = snapP(s2w(sx, sy)); ui.rotMode = 'pick'; ui.rotPicking = false; cv.style.cursor = ''; const d = describe(ui.rotPt); toast(`回す中心を ${d.lr} / ${d.fb} にしました`); renderSide(); render(); return; }
   if (ui.mode === 'view'){
     const hit = hitTest(sx, sy, dispPos());
     if (hit){ ui.focus = hit; if (e.shiftKey || e.metaKey || e.ctrlKey){ ui.sel.has(hit) ? ui.sel.delete(hit) : ui.sel.add(hit); } else ui.sel = new Set([hit]); onSel(); }
@@ -1882,14 +1935,37 @@ function rosterTSV(){ return ['名前\tパート'].concat(S.performers.map(p => 
 function applyTool(name){
   const ids = selIds(); if (!ids.length || ui.mode !== 'edit') return;
   ensureEdit(); pushHist();
-  const pos = S.sets[ui.cur].pos, o = { sp:(+$('#optSp').value || 2) * stepM(), cols:+$('#optCols').value || 5 };
-  const r = SHAPES[name] ? SHAPES[name](ids, pos, o) : xform(ids, pos, XFORMS[name]);
-  if (gridStep() > 0){ const ks = Object.keys(r); if (ks.length){ const c = centroid(ks, r), c2 = snapP(c); ks.forEach(k => { r[k] = snapP([r[k][0] + c2[0] - c[0], r[k][1] + c2[1] - c[1]]); }); } }
-  Object.assign(pos, r); autoFixAfterEdit(ui.cur); changed(true);
+  const pos = S.sets[ui.cur].pos, o = { sp:(+$('#optSp').value || 2) * stepM(), cols:+$('#optCols').value || 5, dia:Math.max(0, +$('#optDia').value || 0) * stepM(), fan:+$('#optFan').value || 90 };
+  const r = SHAPES[name] ? SHAPES[name](ids, pos, o) : xform(ids, pos, XFORMS[name]), info = r.__info; delete r.__info;
+  // 円・弧は形を保つため、中心だけメモリに合わせる（一人ひとりをメモリに寄せると円がゆがむ）
+  const curved = ['circle', 'arc', 'semi', 'fan'].includes(name);
+  if (gridStep() > 0){ const ks = Object.keys(r); if (ks.length){ const c = centroid(ks, r), c2 = snapP(c); ks.forEach(k => { const q = [r[k][0] + c2[0] - c[0], r[k][1] + c2[1] - c[1]]; r[k] = curved ? q : snapP(q); }); } }
+  Object.assign(pos, r);
+  let msg;
+  if (name === 'circle' && ids.length >= 2){
+    const R = dist(centroid(ids, r), r[ids[0]]), st = stepM(), gap = 2 * R * Math.sin(Math.PI / ids.length);
+    msg = `${ids.length}人を直径${fmtSteps(2 * R / st)}歩（${fmtNum(2 * R, 2)}m）の円に並べました。となりとの間隔は約${fmtSteps(gap / st)}歩${gap < 0.6 * st ? '（近すぎます）' : ''}`;
+  }
+  if (name === 'semi' && ids.length >= 2){
+    const st = stepM(), xs = ids.map(id => r[id][0]), D = Math.max(...xs) - Math.min(...xs), gap = Math.PI * D / 2 / (ids.length - 1);
+    msg = `${ids.length}人を直径${fmtSteps(D / st)}歩（${fmtNum(D, 2)}m）の半円に並べました。となりとの間隔は約${fmtSteps(gap / st)}歩${gap < 0.6 * st ? '（近すぎます）' : ''}`;
+  }
+  if (name === 'fan' && info){
+    const st = stepM();
+    msg = `${ids.length}人を直径${fmtSteps(2 * info.R / st)}歩（${fmtNum(2 * info.R, 2)}m）・${Math.round(info.th)}°の扇形に並べました（弧${info.rows}本・間隔 約${fmtSteps(info.sp / st)}歩）${info.sp < o.sp - 1e-6 ? '。人数が多いので間隔を詰めました' : ''}`;
+  }
+  autoFixAfterEdit(ui.cur, false, msg, !!SHAPES[name]); changed(true);
 }
 document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => applyTool(b.dataset.tool)));
+function showDiaM(){ const v = +$('#optDia').value || 0; $('#optDiaM').textContent = v > 0 ? `＝${fmtNum(v * stepM(), 2)}m` : ''; }
+$('#optDia').addEventListener('input', showDiaM);
 $('#cCopy').onclick = copySel;
 document.querySelectorAll('[data-move]').forEach(b => b.addEventListener('click', () => applyMove(b.dataset.move)));
+$('#bRot').onclick = () => {
+  if (ui.cur === 0) return toast('最初のセットには移動がありません。2つ目以降のセットで使ってください');
+  ui.rotOpen = true; if (ui.tab !== 'sets'){ ui.tab = 'sets'; document.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('on', x.dataset.tab === 'sets')); }
+  renderSide(); render(); const el = $('#rotBox'); if (el) el.scrollIntoView({ behavior:'smooth', block:'start' });
+};
 $('#cDup').onclick = pasteDup;
 $('#cPos').onclick = pastePos;
 $('#tSel').onclick = () => { ui.pan = false; $('#tSel').classList.add('on'); $('#tPan').classList.remove('on'); cv.style.cursor = ''; };
@@ -2089,10 +2165,57 @@ function faceHTML(){
   h += `</div>`;
   return h;
 }
+/* ---------- 中心を決めて円で回す ---------- */
+// 前のセットの位置を、中心のまわりに角度ぶん回した所を今のセットの位置にして、円の上を動く
+function rotTargets(){ return moveTargets().filter(id => !ftlOf(ui.cur, id)); }
+function rotCenter(ids){
+  if (ui.rotMode === 'field') return [0, 0];
+  if (ui.rotMode === 'pick' && ui.rotPt) return ui.rotPt;
+  const A = S.sets[Math.max(0, ui.cur - 1)].pos, L = (ids || rotTargets()).filter(id => A[id]);
+  return L.length ? snapP(centroid(L, A)) : [0, 0];
+}
+function rotHTML(){
+  if (ui.mode !== 'edit' || ui.cur === 0) return '';
+  const ids = rotTargets(), C = rotCenter(ids), dsc = describe(C), s = S.sets[ui.cur];
+  const who = ui.sel.size ? `選んだ${ids.length}人` : `全員（ドラムメジャー以外 ${ids.length}人）`;
+  const on = (k, v) => ui[k] === v ? 'on' : '';
+  let h = `<details class="issues rotbox" id="rotBox" ${ui.rotOpen ? 'open' : ''}><summary><b>中心を決めて円で回す</b><span class="note">（隊形ごと回転）</span></summary>
+  <p class="note">${esc(S.sets[ui.cur - 1].name)}の位置から、中心のまわりを回って${esc(s.name)}へ動きます。対象：${who}</p>
+  <div class="row"><span class="note">中心</span><div class="modes"><button data-act="rotMode" data-v="sel" class="${on('rotMode', 'sel')}">${ui.sel.size ? '選んだ人' : '全員'}の真ん中</button><button data-act="rotMode" data-v="field" class="${on('rotMode', 'field')}">フィールドの中央</button><button data-act="rotPick" class="${ui.rotMode === 'pick' || ui.rotPicking ? 'on' : ''}">${ui.rotPicking ? 'クリック待ち…' : 'フィールドで選ぶ'}</button></div></div>
+  <p class="note mono">中心：${esc(dsc.lr)} / ${esc(dsc.fb)}</p>
+  <div class="row"><span class="note">角度</span><div class="modes">${[45, 90, 180, 270, 360].map(v => `<button data-act="rotDeg" data-v="${v}" class="${ui.rotDeg === v ? 'on' : ''}">${v}°</button>`).join('')}</div><input type="number" id="rotDegIn" min="1" max="360" step="1" value="${ui.rotDeg}" style="width:4.2em" aria-label="回す角度">°</div>
+  <div class="row"><span class="note">向き</span><div class="modes"><button data-act="rotDir" data-v="-1" class="${ui.rotDir < 0 ? 'on' : ''}">↻ 右回り</button><button data-act="rotDir" data-v="1" class="${ui.rotDir > 0 ? 'on' : ''}">↺ 左回り</button></div></div>
+  <div class="row"><button data-act="rotApply" class="primary" ${ids.length ? '' : 'disabled'}>回して${esc(s.name)}の位置を決める</button><button data-act="rotPath" ${ids.length ? '' : 'disabled'} title="${esc(s.name)}の位置はそのままで、道すじだけこの中心の円にする">位置はそのまま円の道に</button></div>
+  <p class="note">中心はフィールドに＋で表示されます。360°なら1周して元の位置に戻ります。隊形の形はそのまま回るので、円・半円・扇形・ブロックなどを回すのに使えます。</p></details>`;
+  return h;
+}
+function rotApply(keepPos){
+  const ids = rotTargets(); if (!ids.length) return toast('回す人がいません');
+  ensureEdit(); pushHist();
+  const i = ui.cur, s = S.sets[i], A = S.sets[i - 1].pos, C = rotCenter(ids), dir = ui.rotDir < 0 ? -1 : 1, deg = clamp(+ui.rotDeg || 90, 1, 360);
+  const th = dir * deg * Math.PI / 180, co = Math.cos(th), si = Math.sin(th), r6 = v => Math.round(v * 1e6) / 1e6;
+  s.pat = s.pat || {};
+  ids.forEach(id => {
+    const a = A[id]; if (!a) return;
+    if (!keepPos){ const x = a[0] - C[0], y = a[1] - C[1]; s.pos[id] = [r6(C[0] + x * co - y * si), r6(C[1] + x * si + y * co)]; }
+    s.pat[id] = { t:'circle', d:dir, c:[C[0], C[1]] };
+    if (s.wp) delete s.wp[id];
+  });
+  const d = describe(C), fol = moveTargets().length - ids.length;
+  const msg = keepPos ? `${ids.length}人の${s.name}への道を、中心（${d.lr} / ${d.fb}）の円にしました` : `${ids.length}人を中心（${d.lr} / ${d.fb}）のまわりに${dir < 0 ? '右' : '左'}回りで${deg}°回しました` + (fol ? `（Follow the leader のあとの${fol}人は先頭についていきます）` : '');
+  autoFixAfterEdit(i, false, msg, true); changed(true);
+}
+function drawRotCenter(c, fb){
+  if (ui.mode !== 'edit' || ui.tab !== 'sets' || ui.cur === 0 || ui.playing || !(ui.rotOpen || ui.rotPicking)) return;
+  const [x, y] = w2s(...rotCenter()), k = 9;
+  c.save(); c.strokeStyle = fb ? '#FFE066' : '#1D4ED8'; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(x - k, y); c.lineTo(x + k, y); c.moveTo(x, y - k); c.lineTo(x, y + k); c.stroke();
+  c.beginPath(); c.arc(x, y, 4, 0, Math.PI * 2); c.stroke(); c.restore();
+}
 function indivHTML(){
   const ids = selIds();
   if (ui.mode !== 'edit') return '';
-  if (!ids.length || ui.cur === 0) return (ui.cur > 0 ? '<div class="issues"><h3>隊員ごとの動き</h3><p class="note">人を選ぶと、その人だけ動き出し・到着のカウントを変えたり、中継点を足したりできます。</p></div>' : '') + faceHTML();
+  if (!ids.length || ui.cur === 0) return rotHTML() + (ui.cur > 0 ? '<div class="issues"><h3>隊員ごとの動き</h3><p class="note">人を選ぶと、その人だけ動き出し・到着のカウントを変えたり、中継点を足したりできます。</p></div>' : '') + faceHTML();
   const s = S.sets[ui.cur], C = +s.counts || 0, m = moveSpec(ui.cur, ids[0]);
   let h = `<div class="issues"><h3>選んだ${ids.length}人の動き（${esc(s.name)}へ・全体${C}カウント）</h3>
   <div class="row"><span class="note">動き出し</span><input type="number" id="tmA" min="1" max="${Math.max(1, C)}" step="1" value="${m.a + 1}"><span class="note">カウント目 〜 到着</span><input type="number" id="tmB" min="1" max="${Math.max(1, C)}" step="1" value="${m.b}"><span class="note">カウント目</span></div>
@@ -2109,7 +2232,7 @@ function indivHTML(){
     const allFree = ids.every(id => s.freeIds && s.freeIds[id]);
     h += `<div class="row"><button data-act="freeIds" data-v="${allFree ? 0 : 1}">${allFree ? '選んだ人の歩幅自由をやめる' : '選んだ人を歩幅自由にする'}</button><span class="note">（${esc(s.name)}への移動だけ。走る・大股など）</span></div>`;
   }
-  return h + '</div>' + ftlHTML(ids) + faceHTML();
+  return rotHTML() + h + '</div>' + ftlHTML(ids) + faceHTML();
 }
 const RA_OPTS = [['auto', '直角（今の向きのまま進んでから曲がる）'], ['v', '直角（前後が先）'], ['h', '直角（左右が先）'], ['free', '曲がり方自由（斜めOK）']];
 const setLabel = j => { const st = S.sets[j]; return (S.songs.length > 1 && st.sg !== curSong() ? S.songs[st.sg].name + ' ' : '') + st.name; };
@@ -2130,7 +2253,7 @@ function ftlHTML(ids){
       <span class="note">セット数</span><input type="number" id="ftlN" min="1" max="${maxN}" step="1" value="${nNew}" aria-label="何セット続けるか"><span class="note">（${esc(setLabel(ui.cur))}〜${esc(setLabel(ui.cur + nNew - 1))}）</span></div>
       <div class="row"><span class="note">曲がり方</span><select id="ftlRA" aria-label="曲がり方">${RA_OPTS.map(([k, t]) => `<option value="${k}" ${(ui.ftlRA || 'auto') === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="row"><button data-act="ftlMake" class="primary">選んだ${ids.length}人でつくる</button>${groups.length ? '<button data-act="ftlClear">解除</button>' : ''}</div>
-      <p class="note">先頭の人の動き（直線・半円・円・中継点・タイミング）を、あとの人が前の人との間隔を保ったまま同じ道でたどります。並び順は、${esc(S.sets[ui.cur - 1].name)}の位置で先頭から近い順に自動で決めます。セット数を2以上にすると、そのセット数のあいだ先頭の道をずっとたどります（前のセットで先頭が曲がった角も、あとの人はあとから同じように曲がります）。先頭が斜めに進む区間は、直角に曲がる道に自動で直します（前後→左右 か 左右→前後）。あとの人の到着位置は自動で決まるので、動かすときは先頭の到着位置や中継点を動かしてください。</p>`;
+      <p class="note">先頭の人の動き（直線・半円・90°の弧・円・中継点・タイミング）を、あとの人が前の人との間隔を保ったまま同じ道でたどります。並び順は、${esc(S.sets[ui.cur - 1].name)}の位置で先頭から近い順に自動で決めます。セット数を2以上にすると、そのセット数のあいだ先頭の道をずっとたどります（前のセットで先頭が曲がった角も、あとの人はあとから同じように曲がります）。先頭が斜めに進む区間は、直角に曲がる道に自動で直します（前後→左右 か 左右→前後）。あとの人の到着位置は自動で決まるので、動かすときは先頭の到着位置や中継点を動かしてください。</p>`;
   } else h += groups.length ? `<div class="row"><button data-act="ftlClear">解除</button></div>` : `<p class="note">2人以上を選ぶと、先頭について同じ道をたどる隊列（Follow the leader）をつくれます。</p>`;
   return h + '</div>';
 }
@@ -2343,11 +2466,12 @@ pane.addEventListener('input', e => {
   if (e.target.type === 'color' && (e.target.id === 'pColor' || e.target.dataset.pcolor)){ applyColorInput(e.target); return; }
   if (e.target.id === 'rosterIn'){ ui.rosterText = e.target.value; const pv = $('#rosterPrev'); if (pv) pv.textContent = rosterPreview(); }
 });
-pane.addEventListener('toggle', e => { if (e.target.id === 'rosterBox') ui.rosterOpen = e.target.open; }, true);
+pane.addEventListener('toggle', e => { if (e.target.id === 'rosterBox') ui.rosterOpen = e.target.open; if (e.target.id === 'rotBox'){ ui.rotOpen = e.target.open; render(); } }, true);
 pane.addEventListener('change', e => {
   const t = e.target, row = t.closest('.set-row[data-set]');
   if (t.type === 'color' && (t.id === 'pColor' || t.dataset.pcolor)){ applyColorInput(t); colorEdit = null; changed(true); return; }
   if (t.id === 'renumChk'){ ui.renum = t.checked; return; }
+  if (t.id === 'rotDegIn'){ ui.rotDeg = clamp(Math.round(+t.value || 90), 1, 360); renderSide(); return; }
   if (t.id === 'rosterSec'){ ui.rosterSec = t.value; const pv = $('#rosterPrev'); if (pv) pv.textContent = rosterPreview(); return; }
   if (t.id === 'rosterIn') return;
   if (t.id === 'addSec'){ ui.addSec = t.value; return; }
@@ -2631,6 +2755,12 @@ document.addEventListener('click', e => {
     const id = selIds()[0], p = S.performers.find(x => x.id === id); if (!p) return;
     const v = $('#relabel').value.trim(); if (!v || v === p.label) return;
     pushHist(); p.label = v.slice(0, 20); changed(true); toast(`名前を「${p.label}」にしました`);
+  } else if (a === 'rotMode'){ ui.rotMode = b.dataset.v; ui.rotPicking = false; renderSide(); render();
+  } else if (a === 'rotPick'){ ui.rotPicking = !ui.rotPicking; cv.style.cursor = ui.rotPicking ? 'crosshair' : ''; if (ui.rotPicking) toast('フィールド上で、回す中心にしたい場所をクリックしてください'); renderSide();
+  } else if (a === 'rotDeg'){ ui.rotDeg = +b.dataset.v; renderSide();
+  } else if (a === 'rotDir'){ ui.rotDir = +b.dataset.v; renderSide();
+  } else if (a === 'rotApply'){ rotApply(false);
+  } else if (a === 'rotPath'){ rotApply(true);
   } else if (a === 'resecMany'){ changeParts(selIds(), $('#resecMany').value, $('#renumChk') ? $('#renumChk').checked : true);
   } else if (a === 'pColorReset'){ const ps = selIds().map(id => S.performers.find(x => x.id === id)).filter(p => p && p.c); if (!ps.length) return; pushHist(); ps.forEach(p => delete p.c); changed(true); toast(`${ps.length}人をパートの色に戻しました`);
   } else if (a === 'partColorReset'){ const k = b.dataset.sec; if (!S.partColors || !S.partColors[k]) return; pushHist(); delete S.partColors[k]; if (!Object.keys(S.partColors).length) delete S.partColors; changed(true); toast(`${secOf(k).n}を元の色に戻しました`);

@@ -968,31 +968,65 @@ function ftlInfo(j){  // セット j で、先頭について動く人 → { L, 
   ftlGroupsAt(j).forEach(x => { const A = S.sets[x.i0 - 1].pos, ids = x.g.ids.filter(id => A[id]); if (ids.length < 2) return; ids.forEach((id, k) => { if (k) res.set(id, { L:ids[0], i0:x.i0, gi:x.gi, j, k, id }); }); });
   return res;
 }
-function ftlTrack(i0, gi){  // 先頭の道をつないだ1本の線（出発時の列＋各セットの先頭の動き）
+// 道（track）の上の位置 s（弧長）の点。尾より後ろは最初の向きのまま延ばす
+function trackAt(ver, s){
+  const tr = ver.track, cum = ver.cum, n = cum.length;
+  if (n < 2) return tr[0];
+  if (s <= cum[0]){ const d = cum[1] - cum[0]; return d > 1e-9 ? lerp(tr[0], tr[1], (s - cum[0]) / d) : tr[0]; }
+  if (s >= cum[n - 1]) return tr[n - 1];
+  let lo = 0, hi = n - 1; while (hi - lo > 1){ const mid = (lo + hi) >> 1; if (cum[mid] <= s) lo = mid; else hi = mid; }
+  const span = cum[hi] - cum[lo]; return span > 1e-9 ? lerp(tr[lo], tr[hi], (s - cum[lo]) / span) : tr[hi];
+}
+// 道を位置 s で切った新しい版（戻ったあとで別の向きへ進むとき、先の部分を捨てる）
+function cutTrack(ver, s){
+  const tr = [], cum = [];
+  for (let k = 0; k < ver.cum.length && ver.cum[k] <= s + 1e-9; k++){ tr.push(ver.track[k]); cum.push(ver.cum[k]); }
+  if (!cum.length || s - cum[cum.length - 1] > 1e-9){ tr.push(trackAt(ver, s)); cum.push(s); }
+  return { track:tr, cum };
+}
+function ftlTrack(i0, gi){  // 先頭の歩いた道（出発時の列＋各セットの先頭の動き）。セットをまたいで覚えておく
   ftlFresh(); const key = i0 + ':' + gi; if (ftlMemo.g.has(key)) return ftlMemo.g.get(key);
   const g = S.sets[i0].ftl[gi], A = S.sets[i0 - 1].pos, ids = g.ids.filter(id => A[id]), L = ids[0];
   const chain = ids.slice().reverse().map(id => A[id]), cc = [0];
   for (let k = 1; k < chain.length; k++) cc.push(cc[k - 1] + dist(chain[k - 1], chain[k]));
-  const chainLen = cc[cc.length - 1], track = chain.slice(), cum = cc.slice(), segs = {}, aOf = {};
+  const chainLen = cc[cc.length - 1], segs = {}, aOf = {};
   ids.forEach((id, k) => aOf[id] = cc[ids.length - 1 - k]);
-  const T = { track, cum, segs, aOf }; ftlMemo.g.set(key, T);
+  // 道は版ごとに持つ。先頭が「後退」で来た道を戻るときは道をさかのぼり、あとの人も同じだけ戻る（前進で折り返すときは、あとの人は折り返し点まで来てから折り返す）。
+  // 戻ったところから別の向きへ進むと、その先の道を切って新しい版にする（前のカウントの位置は前の版で求める）
+  let cur = { track:chain.slice(), cum:cc.slice() }; const vers = [cur];
+  const T = { vers, segs, aOf, chainLen }; ftlMemo.g.set(key, T);
   let acc = 0; const last = Math.min(i0 + (g.n || 1) - 1, S.sets.length - 1);
   for (let j = i0; j <= last; j++){
-    const C = +S.sets[j].counts || 0, N = Math.max(24, Math.ceil(C * 8)), us = [], sg = []; let prev = posInMove(j, L, 0);
-    for (let q = 0; q <= N; q++){ const u = C * q / N, pnt = posInMove(j, L, u); if (q){ acc += dist(prev, pnt); track.push(pnt); cum.push(chainLen + acc); } us.push(u); sg.push(acc); prev = pnt; }
-    segs[j] = { us, sg };
+    const C = +S.sets[j].counts || 0, N = Math.max(24, Math.ceil(C * 8)), us = [], sg = [], vi = [], backing = mvOf(j, L) === 'b'; let prev = posInMove(j, L, 0);
+    for (let q = 0; q <= N; q++){
+      const u = C * q / N, pnt = posInMove(j, L, u);
+      if (q){
+        const d = dist(prev, pnt);
+        if (d > 1e-9){
+          const s = chainLen + acc, end = cur.cum[cur.cum.length - 1], back = trackAt(cur, s - d);
+          if (backing && dist(back, pnt) < 1e-6 + d * 0.25) acc -= d;  // 後退で来た道を戻る：あとの人も同じだけさかのぼる
+          else if (s + d <= end + 1e-6 && dist(trackAt(cur, s + d), pnt) < 1e-6 + d * 0.25) acc += d;  // 戻ったあと、同じ道をまた進む
+          else {
+            if (s < cur.cum[cur.cum.length - 1] - 1e-6){ cur = cutTrack(cur, s); vers.push(cur); }
+            cur.track.push(pnt); cur.cum.push(s + d); acc += d;
+          }
+        }
+      }
+      us.push(u); sg.push(acc); vi.push(vers.length - 1); prev = pnt;
+    }
+    segs[j] = { us, sg, vi };
   }
   return T;
 }
 function ftlOf(i, id){ return i > 0 && i < S.sets.length ? ftlInfo(i).get(id) || null : null; }
 function ftlPoint(f, u){
   const T = ftlTrack(f.i0, f.gi), sg = T.segs[f.j]; if (!sg) return S.sets[f.j].pos[f.L];
-  const us = sg.us; let s0;
-  if (u <= us[0]) s0 = sg.sg[0]; else if (u >= us[us.length - 1]) s0 = sg.sg[sg.sg.length - 1];
-  else { let lo = 0, hi = us.length - 1; while (hi - lo > 1){ const mid = (lo + hi) >> 1; if (us[mid] <= u) lo = mid; else hi = mid; } s0 = sg.sg[lo] + (sg.sg[hi] - sg.sg[lo]) * ((u - us[lo]) / ((us[hi] - us[lo]) || 1)); }
-  const cum = T.cum, tr = T.track, arc = clamp((T.aOf[f.id] != null ? T.aOf[f.id] : 0) + s0, 0, cum[cum.length - 1]);
-  let lo = 0, hi = cum.length - 1; while (hi - lo > 1){ const mid = (lo + hi) >> 1; if (cum[mid] <= arc) lo = mid; else hi = mid; }
-  const span = cum[hi] - cum[lo]; return span > 1e-9 ? lerp(tr[lo], tr[hi], (arc - cum[lo]) / span) : tr[hi];
+  const us = sg.us; let s0, v;
+  if (u <= us[0]){ s0 = sg.sg[0]; v = sg.vi[0]; }
+  else if (u >= us[us.length - 1]){ s0 = sg.sg[sg.sg.length - 1]; v = sg.vi[sg.vi.length - 1]; }
+  else { let lo = 0, hi = us.length - 1; while (hi - lo > 1){ const mid = (lo + hi) >> 1; if (us[mid] <= u) lo = mid; else hi = mid; } s0 = sg.sg[lo] + (sg.sg[hi] - sg.sg[lo]) * ((u - us[lo]) / ((us[hi] - us[lo]) || 1)); v = sg.vi[hi]; }
+  const ver = T.vers[v], arc = Math.min((T.aOf[f.id] != null ? T.aOf[f.id] : 0) + s0, ver.cum[ver.cum.length - 1]);
+  return trackAt(ver, arc);
 }
 function applyAllFTL(){  // あとの人の各セットの到着位置を、先頭の道から決め直す
   for (let k = 1; k < S.sets.length; k++){
@@ -2310,7 +2344,7 @@ function ftlHTML(ids){
       <span class="note">セット数</span><input type="number" id="ftlN" min="1" max="${maxN}" step="1" value="${nNew}" aria-label="何セット続けるか"><span class="note">（${esc(setLabel(ui.cur))}〜${esc(setLabel(ui.cur + nNew - 1))}）</span></div>
       <div class="row"><span class="note">曲がり方</span><select id="ftlRA" aria-label="曲がり方">${RA_OPTS.map(([k, t]) => `<option value="${k}" ${(ui.ftlRA || 'auto') === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="row"><button data-act="ftlMake" class="primary">選んだ${ids.length}人でつくる</button>${groups.length ? '<button data-act="ftlClear">解除</button>' : ''}</div>
-      <p class="note">先頭の人の動き（直線・半円・90°の弧・円・中継点・タイミング）を、あとの人が前の人との間隔を保ったまま同じ道でたどります。並び順は、${esc(S.sets[ui.cur - 1].name)}の位置で先頭から近い順に自動で決めます。セット数を2以上にすると、そのセット数のあいだ先頭の道をずっとたどります（前のセットで先頭が曲がった角も、あとの人はあとから同じように曲がります）。先頭が斜めに進む区間は、直角に曲がる道に自動で直します（前後→左右 か 左右→前後）。あとの人の到着位置は自動で決まるので、動かすときは先頭の到着位置や中継点を動かしてください。</p>`;
+      <p class="note">先頭の人の動き（直線・半円・90°の弧・円・中継点・タイミング）を、あとの人が前の人との間隔を保ったまま同じ道でたどります。並び順は、${esc(S.sets[ui.cur - 1].name)}の位置で先頭から近い順に自動で決めます。セット数を2以上にすると、そのセット数のあいだ先頭の道をずっとたどります（前のセットで先頭が曲がった角も、あとの人はあとから同じように曲がります）。先頭の動き方を「後退」にして来た道を戻ると、あとの人も同じ道をさかのぼります（「前進」で折り返すと、あとの人は折り返し点まで来てから折り返します）。先頭が斜めに進む区間は、直角に曲がる道に自動で直します（前後→左右 か 左右→前後）。あとの人の到着位置は自動で決まるので、動かすときは先頭の到着位置や中継点を動かしてください。</p>`;
   } else h += groups.length ? `<div class="row"><button data-act="ftlClear">解除</button></div>` : `<p class="note">2人以上を選ぶと、先頭について同じ道をたどる隊列（Follow the leader）をつくれます。</p>`;
   return h + '</div>';
 }

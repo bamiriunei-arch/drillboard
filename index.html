@@ -230,7 +230,7 @@ body:not(.can-link) .link-only{display:none!important}
         <option value="indoor">体育館フロア</option>
         <option value="square">正方形フロア（30m）</option>
         <option value="national">正方形フロア・全国大会（青）</option>
-        <option value="lime">正方形フロア（黄緑）</option>
+        <option value="lime">正方形フロア（ミントグリーン）</option>
       </select>
       <button id="bUndo" class="edit-only" title="元に戻す (Ctrl+Z)">元に戻す</button>
       <button id="bLib" title="このブラウザに保存したショーを開く・保存する">ショー一覧</button>
@@ -330,6 +330,7 @@ body:not(.can-link) .link-only{display:none!important}
         <button data-tab="sets" class="on">セット</button>
         <button data-tab="perf">隊員</button>
         <button data-tab="dot">ドットシート</button>
+        <button data-tab="conte">コンテ</button>
         <button data-tab="conf">設定</button>
       </nav>
       <div class="pane" id="pane"></div>
@@ -659,7 +660,8 @@ function normalize(sh){
     });
   });
   // 曲：各セットは曲番号 sg を持ち、曲の順に並ぶ。セットのない曲は消す
-  sh.songs.forEach((g, k) => { g.name = String(g.name || `${k + 1}曲目`); g.bpm = clamp(+g.bpm || 120, 30, 300); g.meter = clamp(Math.round(+g.meter || 4), 1, 12); g.off = Math.max(0, +g.off || 0); g.bar0 = Number.isFinite(+g.bar0) && g.bar0 !== null && g.bar0 !== '' ? Math.round(+g.bar0) : 1; });
+  sh.songs.forEach((g, k) => { g.name = String(g.name || `${k + 1}曲目`); g.bpm = clamp(+g.bpm || 120, 30, 300); g.meter = clamp(Math.round(+g.meter || 4), 1, 12); g.off = clamp(+g.off || 0, -30, 36000); g.bar0 = Number.isFinite(+g.bar0) && g.bar0 !== null && g.bar0 !== '' ? Math.round(+g.bar0) : 1;
+    if (Array.isArray(g.beats) && g.beats.length >= 4 && g.beats.every((v, i) => Number.isFinite(+v) && (i === 0 || +v > +g.beats[i - 1]))){ g.beats = g.beats.map(Number); g.sync = g.sync !== false; } else { delete g.beats; delete g.sync; } });
   let lastSg = 0;
   sh.sets.forEach((st, i) => { let g = Math.round(+st.sg || 0); g = i === 0 ? 0 : clamp(g, lastSg, sh.songs.length - 1); st.sg = g; lastSg = g; });
   const used = [...new Set(sh.sets.map(st => st.sg))];
@@ -675,6 +677,15 @@ const MM = v => Math.round(v * 1000);
 const STEP_OF = f => f.type === 'football' ? 22.5 * 0.0254 : ((f.stepCm || 62.5) / 100);
 const DEF_FIELD = { hash:'ncaa', w:30, d:20, stepCm:62.5, sqOuter:30, sqInner:20 };
 const DISP_KEYS = ['nums', 'labels', 'setNums', 'dist', 'dirs'];
+// 拍の時刻の保存：最初の拍（ミリ秒）、よくある間隔、そのあとは間隔とのずれだけ
+function packBeats(b){
+  const ms = b.map(v => Math.round(v * 1000)), d = ms.slice(1).map((v, i) => v - ms[i]), srt = d.slice().sort((x, y) => x - y), base = srt[srt.length >> 1] || 0;
+  return [ms[0], base, ...d.map(v => v - base)];
+}
+function unpackBeats(a){
+  if (!Array.isArray(a) || a.length < 3) return null; const out = [a[0] / 1000]; let t = a[0];
+  for (let i = 2; i < a.length; i++){ t += a[1] + a[i]; out.push(t / 1000); } return out;
+}
 function packShow(sh){
   const ids = sh.performers.map(p => p.id), idx = new Map(ids.map((id, i) => [id, i]));
   const U = STEP_OF(sh.field) / 8, UQ = v => Math.round(v / U), onU = v => Math.abs(v / U - Math.round(v / U)) < 1e-4;
@@ -688,7 +699,9 @@ function packShow(sh){
   const off = DISP_KEYS.filter(k => sh.display && sh.display[k] === false); if (off.length) c.dh = off;
   if (sh.partColors && Object.keys(sh.partColors).length) c.pc = Object.assign({}, sh.partColors);
   if (Object.keys(c).length) o.c = c;
-  o.g = sh.songs.map(g => { const a = [g.name, g.bpm, g.meter, g.off, g.bar0 != null ? g.bar0 : 1], d = [null, null, 4, 0, 1]; while (a.length > 2 && a[a.length - 1] === d[a.length - 1]) a.pop(); return a; });
+  o.g = sh.songs.map(g => { const a = [g.name, g.bpm, g.meter, g.off, g.bar0 != null ? g.bar0 : 1], d = [null, null, 4, 0, 1];
+    if (Array.isArray(g.beats) && g.beats.length >= 4){ a.push(packBeats(g.beats)); if (g.sync === false) a.push(0); return a; }  // 音源から調べた拍
+    while (a.length > 2 && a[a.length - 1] === d[a.length - 1]) a.pop(); return a; });
   const cnt = {};
   o.p = sh.performers.map(p => { cnt[p.sec] = (cnt[p.sec] || 0) + 1; const def = p.sec === 'DM' ? (cnt.DM === 1 ? 'DM' : 'DM' + cnt.DM) : p.sec + cnt[p.sec]; if (p.c) return [p.sec, p.label === def ? 0 : p.label, p.c]; return p.label === def ? p.sec : [p.sec, p.label]; });
   // 全員の位置がそろって割り切れる数（メモリの上なら 1歩＝8 など）で割って、数字を小さくする
@@ -728,7 +741,7 @@ function unpackV3(o){
   const disp = {}; DISP_KEYS.forEach(k => disp[k] = !(c.dh || []).includes(k));
   const sh = { v:1, title:o.t, field, snap:c.sn != null ? c.sn : 1, freeStride:!!c.fs, turnDur:c.u != null ? c.u : 1, maxN:c.x || 8,
     auto:{ on:c.ao !== 0, maxAdd:c.am != null ? c.am : 8, byBar:c.ab !== 0 }, display:disp, ...(c.pc ? { partColors:Object.assign({}, c.pc) } : {}),
-    songs:(o.g || []).map(a => ({ name:a[0], bpm:a[1], meter:a[2] != null ? a[2] : 4, off:a[3] || 0, bar0:a[4] != null ? a[4] : 1 })),
+    songs:(o.g || []).map(a => { const g = { name:a[0], bpm:a[1], meter:a[2] != null ? a[2] : 4, off:a[3] || 0, bar0:a[4] != null ? a[4] : 1 }, bt = unpackBeats(a[5]); if (bt){ g.beats = bt; g.sync = a[6] !== 0; } return g; }),
     performers:perf, sets:[] };
   let prev = null; const inSong = {};
   (o.s || []).forEach(r => {
@@ -1137,11 +1150,50 @@ const barOf = i => S.sets[i].bar != null ? S.sets[i].bar : autoBar(i);
 function setLen(i){ const s = S.sets[i], C = i ? (+s.counts || 0) : 0, H = +s.hold || 0, m = meterOf(i); return { C, H, all:C + H, bars:(C + H) / m, m }; }
 function metaHTML(i){ const s = S.sets[i], L = setLen(i); return `${s.rm ? `<span class="rm">${esc(s.rm)}</span>` : ''}<span class="mono">m.${barOf(i)}</span>${s.bar != null ? '' : '<span>（自動）</span>'}<span class="mono" style="margin-left:auto">${L.all}カウント・${fmtNum(L.bars, 2)}小節</span>`; }
 const localNo = i => i - songSets(S.sets[i].sg)[0] + 1;
-function secAt(t){ const T = tl(); let s = 0; for (let i = 0; i < T.length; i++){ const a = T[i].start, b = T[i].end; if (t <= a) break; s += (Math.min(t, b) - a) * 60 / bpmOf(i); } return s; }
+/* ---------- 音源に合わせた拍 ---------- */
+// 曲に拍の時刻（song.beats、音源の秒）があって合わせる設定なら、その曲のカウント c は「カウント0の拍から c 拍あと」の時刻になる
+const bmCache = new WeakMap();
+function beatMap(g){
+  const sg = S.songs[g]; if (!sg || sg.sync === false || !Array.isArray(sg.beats) || sg.beats.length < 4) return null;
+  let m = bmCache.get(sg.beats); if (m && m.off === sg.off) return m;
+  const b = sg.beats, n = b.length, k = Math.min(n - 1, 8);
+  m = { off:sg.off, b, k0:nearestBeat(b, sg.off || 0), head:(b[k] - b[0]) / k, tail:(b[n - 1] - b[n - 1 - k]) / k };
+  bmCache.set(b, m); return m;
+}
+function beatSec(m, x){  // カウント0から x カウント目までの秒
+  const k = m.k0 + x, b = m.b, n = b.length; let t;
+  if (k <= 0) t = b[0] + k * m.head; else if (k >= n - 1) t = b[n - 1] + (k - n + 1) * m.tail;
+  else { const i = Math.floor(k); t = b[i] + (b[i + 1] - b[i]) * (k - i); }
+  return t - b[m.k0];
+}
+function beatCount(m, s){  // beatSec の逆
+  const b = m.b, n = b.length, tt = s + b[m.k0]; let k;
+  if (tt <= b[0]) k = (tt - b[0]) / m.head; else if (tt >= b[n - 1]) k = n - 1 + (tt - b[n - 1]) / m.tail;
+  else { let lo = 0, hi = n - 1; while (hi - lo > 1){ const md = (lo + hi) >> 1; if (b[md] <= tt) lo = md; else hi = md; } k = lo + (tt - b[lo]) / (b[hi] - b[lo]); }
+  return k - m.k0;
+}
+// セット i の区間 a〜b（カウント）にかかる秒。gs はその曲のはじめのカウント
+function segSec(i, gs, a, b){ const m = beatMap(S.sets[i].sg || 0); return m ? beatSec(m, b - gs) - beatSec(m, a - gs) : (b - a) * 60 / bpmOf(i); }
+function secAt(t){
+  const T = tl(); let s = 0, g = -1, gs = 0;
+  for (let i = 0; i < T.length; i++){ const a = T[i].start, b = T[i].end, sg = S.sets[i].sg || 0; if (sg !== g){ g = sg; gs = a; } if (t <= a) break; s += segSec(i, gs, a, Math.min(t, b)); }
+  return s;
+}
 function countAtSec(sec){
-  const T = tl(); let s = 0; if (sec <= 0) return 0;
-  for (let i = 0; i < T.length; i++){ const len = (T[i].end - T[i].start) * 60 / bpmOf(i); if (sec <= s + len) return T[i].start + (sec - s) * bpmOf(i) / 60; s += len; }
+  const T = tl(); let s = 0, g = -1, gs = 0; if (sec <= 0) return 0;
+  for (let i = 0; i < T.length; i++){
+    const a = T[i].start, b = T[i].end, sg = S.sets[i].sg || 0; if (sg !== g){ g = sg; gs = a; }
+    const len = segSec(i, gs, a, b);
+    if (sec <= s + len){ const m = beatMap(sg); return m ? gs + beatCount(m, beatSec(m, a - gs) + (sec - s)) : a + (sec - s) * bpmOf(i) / 60; }
+    s += len;
+  }
   return total() + 1e-3;
+}
+// セット i のテンポ（表示用）。音源に合わせている曲は、そのセットの間の平均
+function tempoText(i){
+  const g = S.sets[i].sg || 0, m = beatMap(g); if (!m) return '♩' + bpmOf(i);
+  const T = tl(), gs = songRange(g)[0], a = T[i].start, b = Math.max(T[i].end, a + 1), d = beatSec(m, b - gs) - beatSec(m, a - gs);
+  return '♩≈' + Math.round(60 * (b - a) / (d || 1));
 }
 const fmtTime = s => { s = Math.max(0, s); const m = Math.floor(s / 60); return m + ':' + (s - m * 60).toFixed(1).padStart(4, '0'); };
 
@@ -1382,7 +1434,7 @@ function drawSquare(c){
   const K = blue
     ? { around:'#262c35', floor:'#1f5fae', grid:'rgba(255,255,255,.2)', ink:'#ffffff', point:'#ffffff', pointEdge:'#0d2f5c', label:'rgba(255,255,255,.85)' }
     : lime
-    ? { around:'#27311f', floor:'#9acd32', grid:'rgba(35,60,5,.2)', ink:'#ffffff', point:'#ffffff', pointEdge:'#3f5f0c', label:'rgba(255,255,255,.85)' }
+    ? { around:'#1d3229', floor:'#6fcf9f', grid:'rgba(10,70,45,.2)', ink:'#ffffff', point:'#ffffff', pointEdge:'#2c6b50', label:'rgba(255,255,255,.88)' }
     : { around:'#a57c49', floor:'#dcb47c', grid:'rgba(30,25,20,.22)', ink:'#ffffff', point:'#ffffff', pointEdge:'#6b4a22', label:'#2b1d0c' };
   c.fillStyle = K.around; c.fillRect(0, 0, W, H);
   rectW(c, -ho, -ho, ho, ho, K.floor);
@@ -1585,6 +1637,7 @@ function render(){
   if (!S || !W) return;
   const c = ctx; c.setTransform(dpr, 0, 0, dpr, 0, 0);
   S.field.type === 'football' ? drawFootball(c) : isSq() ? drawSquare(c) : drawIndoor(c);
+  if (!ui.offscreen) drawConte(c);
   drawPodium(c);
   const fb = darkField();
   const P = dispPos(), r = dotRadius(), inkA = fb ? '255,255,255' : '25,30,48';
@@ -1620,7 +1673,7 @@ function render(){
   }
   drawDistances(c, P, fb);
   drawWaypoints(c, fb);
-  if (!ui.offscreen) drawRotCenter(c, fb);
+  if (!ui.offscreen){ drawRotCenter(c, fb); drawConteHandles(c); }
   // 隊員
   const hot = hotNow(P);
   const order = [...S.performers].sort((a, b) => (ui.sel.has(a.id) ? 1 : 0) - (ui.sel.has(b.id) ? 1 : 0));
@@ -1716,7 +1769,7 @@ function renderTimeline(){
 function renderSongbar(){
   const g = curSong();
   let h = '<span class="tlabel">曲</span>';
-  S.songs.forEach((sg, k) => { const [a, b] = songRange(k); h += `<button class="song ${k === g ? 'on' : ''}" data-song="${k}" title="${esc(sg.name)}を開く">${esc(sg.name)}<small>♩${sg.bpm} ${fmtTime(secAt(b) - secAt(a))}</small></button>`; });
+  S.songs.forEach((sg, k) => { const [a, b] = songRange(k); h += `<button class="song ${k === g ? 'on' : ''}" data-song="${k}" title="${esc(sg.name)}を開く">${esc(sg.name)}<small>${beatMap(k) ? beatRangeText(k) : '♩' + sg.bpm} ${fmtTime(secAt(b) - secAt(a))}</small></button>`; });
   h += `<button class="edit-only" data-act="addSong">＋ 曲を追加</button><span class="note songtotal">通し ${fmtTime(secAt(total()))} · ${total()}カウント</span>`;
   $('#songbar').innerHTML = h;
 }
@@ -1739,6 +1792,7 @@ cv.addEventListener('pointerdown', e => {
   cv.setPointerCapture(e.pointerId);
   const [sx, sy] = local(e);
   if (ui.pan || e.button === 1 || e.button === 2){ ui.drag = { mode:'pan', sx, sy, ox:view.ox, oy:view.oy }; cv.style.cursor = 'grabbing'; return; }
+  { const hk = conteHandleAt(sx, sy); if (hk >= 0){ const pg = contePageOf(ui.cur); ui.drag = { mode:'conte', k:hk, pg }; conte.drag = pg; return; } }
   if (ui.rotPicking && ui.mode === 'edit'){ ui.rotPt = snapP(s2w(sx, sy)); ui.rotMode = 'pick'; ui.rotPicking = false; cv.style.cursor = ''; const d = describe(ui.rotPt); toast(`回す中心を ${d.lr} / ${d.fb} にしました`); renderSide(); render(); return; }
   if (ui.mode === 'view'){
     const hit = hitTest(sx, sy, dispPos());
@@ -1787,6 +1841,7 @@ cv.addEventListener('pointermove', e => {
     else { s.face = s.face || {}; selIds().forEach(id => s.face[id] = deg); }
     d.deg = deg; ui.ver++; render(); return;
   }
+  if (d.mode === 'conte'){ d.pg.world[d.k] = s2w(sx, sy); render(); return; }
   if (d.mode === 'pan'){ if (Math.hypot(sx - d.sx, sy - d.sy) > 3) d.moved = true; view.ox = d.ox + sx - d.sx; view.oy = d.oy + sy - d.sy; render(); return; }
   if (d.mode === 'wp'){
     if (!d.moved){ if (Math.hypot(sx - d.sx, sy - d.sy) < 3) return; pushHist(); d.moved = true; }
@@ -1817,9 +1872,16 @@ function endDrag(){
   const d = ui.drag; ui.drag = null; cv.style.cursor = ui.pan ? 'grab' : '';
   if (!d) return;
   if (d.mode === 'move' && d.moved){
+    // コンテを下に敷いているセットで、1人を別の人のいる所へ落としたら、2人の位置を入れ替える（拾った点の人違いを直す）
+    const ids = Object.keys(d.start), P0 = S.sets[ui.cur].pos;
+    if (ids.length === 1 && conte.show && contePageOf(ui.cur)){
+      const id = ids[0], q = P0[id], st = stepM(), other = S.performers.find(p => p.id !== id && P0[p.id] && Math.hypot(P0[p.id][0] - q[0], P0[p.id][1] - q[1]) < st * 0.35);
+      if (other){ P0[id] = [...P0[other.id]]; P0[other.id] = [...d.start[id]]; toast(`${(S.performers.find(p => p.id === id) || {}).label}と${other.label}の位置を入れ替えました`); }
+    }
     autoFixAfterEdit(ui.cur); changed(true);
     if (Object.keys(d.start).some(id => ftlOf(ui.cur, id))) toast('Follow the leader のあとの人は、先頭の道をたどる位置に自動で戻ります。動かすときは先頭を動かしてください');
   }
+  if (d.mode === 'conte'){ conte.drag = null; render(); }
   if (d.mode === 'wp'){ if (d.moved) changed(true); else render(); }
   if (d.mode === 'rot'){ if (d.moved){ changed(true); toast(`${ui.sel.size}人の向きを${ui.faceWhen === 'count' ? `「${S.sets[ui.cur].name}」の${faceK(ui.cur)}カウント目に` : `「${S.sets[ui.cur].name}」に着いたら`}${faceName(d.deg)}にしました`); } else render(); }
   if (d.mode === 'pan' && d.empty && !d.moved && ui.sel.size){ ui.sel.clear(); onSel(); }
@@ -2092,7 +2154,7 @@ function routeAudio(A){
   const B = audioBus(); if (!B) return false;
   try { A.node = actx.createMediaElementSource(A.el); A.node.connect(B); return true; } catch (e) { return false; }
 }
-function isAccent(T, fi){ return T.some((x, i) => i > 0 && x.arrive > x.start && Math.abs(fi - (x.start + 1)) < 1e-6); }
+function isAccent(){ return false; }  // クリック音はセットの頭も含めてすべて同じ音
 function play(){
   if (ui.playing) return stop();
   startPlay();
@@ -2109,20 +2171,28 @@ function startPlay(){
 }
 // 再生中の時計を t（カウント）に合わせ直す。音源があれば音源をその位置から鳴らす
 function seekClock(t){
-  const old = audioOf(ui.playSong); if (old) old.el.pause();
+  const old = audioOf(ui.playSong); pauseAudio(old);
   ui.t = t; ui.playT0 = t; ui.p0 = secAt(t); ui.w0 = performance.now(); ui.nextClick = Math.floor(t + 1e-6) + 1;
   ui.playSong = -1; syncAudio(ui.p0, t);
 }
 function audioOf(g){ return g >= 0 ? ui.audios[g] || null : null; }
+function playAudioAt(A, pos){
+  if (!A) return; clearTimeout(A.wait); A.wait = 0;
+  try {
+    if (pos >= 0){ A.el.currentTime = pos; A.el.play().catch(() => {}); }
+    else { A.el.pause(); A.el.currentTime = 0; A.wait = setTimeout(() => { A.wait = 0; A.el.play().catch(() => {}); }, -pos * 1000); }
+  } catch (e) {}
+}
+function pauseAudio(A){ if (!A) return; clearTimeout(A.wait); A.wait = 0; A.el.pause(); }
 function syncAudio(sec, t){
   const g = songAtT(t != null ? t : ui.t); if (g === ui.playSong) return;
-  const old = audioOf(ui.playSong); if (old) old.el.pause();
+  const old = audioOf(ui.playSong); pauseAudio(old);
   ui.playSong = g; const A = audioOf(g);
-  if (A){ try { A.el.currentTime = Math.max(0, S.songs[g].off + (sec - secAt(songRange(g)[0]))); A.el.play().catch(() => {}); } catch (e) {} }
+  if (A) playAudioAt(A, S.songs[g].off + (sec - secAt(songRange(g)[0])));
 }
 function stop(){
   if (!ui.playing) return; ui.playing = false;
-  const A = audioOf(ui.playSong); if (A) A.el.pause(); ui.playSong = -1;
+  const A = audioOf(ui.playSong); pauseAudio(A); ui.playSong = -1;
   $('#playIcon').innerHTML = '<path d="M7 4v16l13-8z"/>';
   renderSide();
 }
@@ -2188,13 +2258,431 @@ document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click
 }));
 function renderTop(){
   const ti = $('#showTitle'); if (document.activeElement !== ti) ti.value = S.title;
-  $('#fieldType').value = S.field.type; $('#bpm').value = S.songs[curSong()].bpm; $('#snap').value = String(S.snap);
+  $('#fieldType').value = S.field.type; { const bi = $('#bpm'), g0 = curSong(), bm = beatMap(g0); bi.value = S.songs[g0].bpm; bi.disabled = !!bm; bi.title = bm ? `音源のテンポに合わせています（${beatRangeText(g0)}）。設定の「音源に合わせる」で切り替えられます` : ''; } $('#snap').value = String(S.snap);
   document.querySelectorAll('[data-disp]').forEach(b => b.classList.toggle('on', !!S.display[b.dataset.disp]));
+}
+/* ---------- コンテの読み込み（下に敷く・点を拾う） ---------- */
+// 読み込んだコンテはこのブラウザの中だけで使い、保存しない。1ページ＝1セット
+const conte = { pages:[], show:true, alpha:0.7, align:false, add:true, busy:'' };
+// 4点の対応から射影変換（3×3）を求める
+function homography(src, dst){
+  const A = [], b = [];
+  for (let k = 0; k < 4; k++){ const [x, y] = src[k], [u, v] = dst[k];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u); A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v); }
+  for (let i = 0; i < 8; i++){
+    let p = i; for (let r = i + 1; r < 8; r++) if (Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
+    [A[i], A[p]] = [A[p], A[i]]; [b[i], b[p]] = [b[p], b[i]];
+    if (Math.abs(A[i][i]) < 1e-12) return null;
+    for (let r = 0; r < 8; r++){ if (r === i) continue; const f = A[r][i] / A[i][i]; for (let c = i; c < 8; c++) A[r][c] -= f * A[i][c]; b[r] -= f * b[i]; }
+  }
+  const h = b.map((v, i) => v / A[i][i]); return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+}
+const hApply = (H, x, y) => { const w = H[6] * x + H[7] * y + H[8]; return [(H[0] * x + H[1] * y + H[2]) / w, (H[3] * x + H[4] * y + H[5]) / w]; };
+// フィールドの外枠の4つの角（左奥・右奥・右前・左前）
+function conteFieldCorners(){ const [hx, hy] = fieldHalf(); return [[-hx, hy], [hx, hy], [hx, -hy], [-hx, -hy]]; }
+let pdfLib = null;
+function loadScript(src){ return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('load')); document.head.appendChild(s); }); }
+async function getPdfLib(){
+  if (pdfLib) return pdfLib;
+  const base = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+  await loadScript(base + 'pdf.min.js'); pdfLib = window.pdfjsLib; pdfLib.GlobalWorkerOptions.workerSrc = base + 'pdf.worker.min.js'; return pdfLib;
+}
+const CONTE_PX = 2200;  // 取り込むときの長い辺のピクセル数
+function canvasOf(w, h){ const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
+function blobOf(cvs){ return new Promise(res => cvs.toBlob(res, 'image/jpeg', 0.88)); }
+// ファイルのページを1枚ずつ画像にして onPage(画像, 名前) に渡す（全部を一度に持たないので、ページが多くてもメモリを使いすぎない）
+async function contePagesFromFile(f, onPage){
+  if (/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name)){
+    const lib = await getPdfLib(), doc = await lib.getDocument({ data:new Uint8Array(await f.arrayBuffer()) }).promise;
+    for (let k = 1; k <= doc.numPages; k++){
+      conte.busy = `${f.name} の ${k}/${doc.numPages} ページを読み込んでいます…`; renderSide();
+      const pg = await doc.getPage(k), v0 = pg.getViewport({ scale:1 }), sc = CONTE_PX / Math.max(v0.width, v0.height), vp = pg.getViewport({ scale:sc });
+      const cvs = canvasOf(vp.width, vp.height), cx = cvs.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cvs.width, cvs.height);
+      await pg.render({ canvasContext:cx, viewport:vp }).promise; pg.cleanup();
+      await onPage(cvs, `${f.name} p${k}`);
+    }
+    doc.destroy();
+  } else {
+    let bmp; try { bmp = await createImageBitmap(f); } catch (e) { bmp = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = URL.createObjectURL(f); }); }
+    const w = bmp.width, h = bmp.height, sc = Math.min(1, CONTE_PX / Math.max(w, h)), cvs = canvasOf(w * sc, h * sc), cx = cvs.getContext('2d');
+    cx.fillStyle = '#fff'; cx.fillRect(0, 0, cvs.width, cvs.height); cx.drawImage(bmp, 0, 0, cvs.width, cvs.height);
+    await onPage(cvs, f.name);
+  }
+}
+// 明るさ（0〜255）の配列。長い辺を maxS に縮める
+function grayOf(cvs, maxS){
+  const sc = Math.min(1, (maxS || 1e9) / Math.max(cvs.width, cvs.height)), w = Math.max(1, Math.round(cvs.width * sc)), h = Math.max(1, Math.round(cvs.height * sc));
+  const t = canvasOf(w, h), cx = t.getContext('2d'); cx.drawImage(cvs, 0, 0, w, h);
+  const d = cx.getImageData(0, 0, w, h).data, g = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) g[i] = (d[i * 4] * 77 + d[i * 4 + 1] * 150 + d[i * 4 + 2] * 29) >> 8;
+  return { g, w, h, sc };
+}
+function otsu(g){
+  const hist = new Float64Array(256); for (let i = 0; i < g.length; i++) hist[g[i]]++;
+  let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sB = 0, wB = 0, best = 0, th = 128;
+  for (let t = 0; t < 256; t++){ wB += hist[t]; if (!wB) continue; const wF = g.length - wB; if (!wF) break; sB += t * hist[t]; const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) ** 2; if (v > best){ best = v; th = t; } }
+  return th;
+}
+// 紙のコンテから、フィールドの外枠（太い線の四角）を探す。見つかれば画像上の4つの角
+function conteDetectFrame(cvs){
+  const { g, w, h, sc } = grayOf(cvs, 1400), th = Math.min(otsu(g), 160), dark = i => g[i] < th;
+  const NB = 24;
+  function tracks(vert){
+    const L = vert ? h : w, M = vert ? w : h, bh = L / NB, pts = [];
+    for (let b = 0; b < NB; b++){
+      const a0 = Math.floor(b * bh), a1 = Math.floor((b + 1) * bh), frac = new Float32Array(M);
+      for (let a = a0; a < a1; a++) for (let m = 0; m < M; m++) if (dark(vert ? a * w + m : m * w + a)) frac[m]++;
+      let m = 0; while (m < M){ if (frac[m] / (a1 - a0) >= 0.55){ let e = m; while (e + 1 < M && frac[e + 1] / (a1 - a0) >= 0.55) e++; pts.push({ b, c:(m + e) / 2, wd:e - m + 1, at:(a0 + a1) / 2 }); m = e + 1; } else m++; }
+    }
+    const tol = Math.max(4, M * 0.006), trs = [];
+    pts.forEach(p => { let best = null; for (const t of trs){ const q = t[t.length - 1]; if (p.b > q.b && p.b - q.b <= 4 && Math.abs(p.c - q.c) <= tol && (!best || Math.abs(p.c - q.c) < Math.abs(p.c - best[best.length - 1].c))) best = t; } if (best) best.push(p); else trs.push([p]); });
+    return trs.filter(t => t.length >= NB * 0.35).map(t => {
+      const n = t.length, ma = t.reduce((s, p) => s + p.at, 0) / n, mc = t.reduce((s, p) => s + p.c, 0) / n;
+      let num = 0, den = 0; t.forEach(p => { num += (p.at - ma) * (p.c - mc); den += (p.at - ma) ** 2; });
+      const k = den ? num / den : 0, wd = t.map(p => p.wd).sort((x, y) => x - y)[n >> 1];
+      return { k, c0:mc - k * ma, wd, n, at:(a => mc + k * (a - ma)) };
+    });
+  }
+  let V = tracks(true), Hh = tracks(false);
+  const thick = arr => { if (arr.length <= 8) return arr; const ws = arr.map(t => t.wd).sort((x, y) => x - y), md = ws[ws.length >> 1], f = arr.filter(t => t.wd >= md * 1.4); return f.length >= 2 ? f : arr; };
+  V = thick(V); Hh = thick(Hh);
+  if (V.length < 2 || Hh.length < 2) return null;
+  const cx = w / 2, cy = h / 2;
+  Hh.sort((a, b) => a.at(cx) - b.at(cx)); V.sort((a, b) => a.at(cy) - b.at(cy));
+  const top = Hh[0], bot = Hh[Hh.length - 1], side = bot.at(cx) - top.at(cx);
+  const [hx, hy] = fieldHalf(), want = side * hx / hy, left = V[0];
+  let right = V[V.length - 1], bd = Infinity;
+  V.slice(1).forEach(v => { const d = Math.abs(v.at(cy) - left.at(cy) - want); if (d < bd){ bd = d; right = v; } });
+  if (bd > want * 0.25) right = V[V.length - 1];
+  if (right.at(cy) - left.at(cy) < w * 0.2 || side < h * 0.2) return null;
+  // 縦の線 x = c0 + k*y と横の線 y = c0 + k*x の交点
+  const X = (v, hz) => { const y = (hz.c0 + hz.k * v.c0) / (1 - hz.k * v.k), x = v.c0 + v.k * y; return [x / sc, y / sc]; };
+  return [X(left, top), X(right, top), X(right, bot), X(left, bot)];
+}
+function contePageDefaults(cvs){
+  const c = conteDetectFrame(cvs);
+  if (c) return { img:c, auto:true };
+  // 見つからないとき：画像の中央に、フィールドの縦横比で大きめに置く
+  const [hx, hy] = fieldHalf(), W0 = cvs.width, H0 = cvs.height, s = Math.min(W0 * 0.8 / (2 * hx), H0 * 0.8 / (2 * hy)), x0 = W0 / 2 - hx * s, y0 = H0 / 2 - hy * s;
+  return { img:[[x0, y0], [W0 - x0, y0], [W0 - x0, H0 - y0], [x0, H0 - y0]], auto:false };
+}
+// 画像をフィールドの向きにそろえた「インクの濃さ」の地図にする（紙の白は透明）
+const conteCache = new Map();   // page → { key, ppm, x0, y1, w, h, a(Uint8Array), cvs, ink }
+const conteLRU = [];            // 画素を展開しておくページ（新しい順）。たくさんのページで端末のメモリを使いすぎないように
+async function contePrep(pg){
+  if (!pg.gray){
+    const bmp = await createImageBitmap(pg.blob), cvs = canvasOf(bmp.width, bmp.height); cvs.getContext('2d').drawImage(bmp, 0, 0); if (bmp.close) bmp.close();
+    pg.gray = grayOf(cvs); pg.gray.sc = pg.gray.w / pg.w;
+  }
+  const k = conteLRU.indexOf(pg); if (k >= 0) conteLRU.splice(k, 1); conteLRU.unshift(pg);
+  while (conteLRU.length > 4){ const old = conteLRU.pop(); old.gray = null; conteCache.delete(old); }
+  return pg;
+}
+function conteRect(pg, preview){
+  const key = JSON.stringify([pg.world, fieldHalf(), S.field.type, preview ? 1 : 0]), old = conteCache.get(pg);
+  if (old && old.key === key) return old;
+  const [hx, hy] = fieldHalf(), mg = 0.12 * Math.max(hx, hy), st = stepM();
+  let ppm = (preview ? 8 : 24) / st; const W0 = 2 * (hx + mg), H0 = 2 * (hy + mg); ppm = Math.min(ppm, 2600 / Math.max(W0, H0));
+  const w = Math.round(W0 * ppm), h = Math.round(H0 * ppm), x0 = -hx - mg, y1 = hy + mg;
+  const src = pg.gray; if (!src) return null;
+  const Hm = homography(pg.world, pg.img);   // フィールド → 画像
+  const a = new Uint8Array(w * h), sg = src.g, sw = src.w, shh = src.h, ss = src.sc;
+  if (!pg.lev){ const hs = new Float64Array(256); for (let i = 0; i < sg.length; i++) hs[sg[i]]++; const q = f => { let c = 0; for (let v = 0; v < 256; v++){ c += hs[v]; if (c >= sg.length * f) return v; } return 255; }; pg.lev = [q(0.02), q(0.6)]; }
+  const [ink, paper] = pg.lev, span = Math.max(20, paper - ink);
+  if (Hm) for (let v = 0; v < h; v++){
+    const wy = y1 - (v + 0.5) / ppm;
+    for (let u = 0; u < w; u++){
+      const wx = x0 + (u + 0.5) / ppm, [ix, iy] = hApply(Hm, wx, wy), sx = ix * ss, sy = iy * ss;
+      if (sx < 0 || sy < 0 || sx >= sw - 1 || sy >= shh - 1) continue;
+      const xi = sx | 0, yi = sy | 0, fx = sx - xi, fy = sy - yi, p = yi * sw + xi;
+      const gv = (sg[p] * (1 - fx) + sg[p + 1] * fx) * (1 - fy) + (sg[p + sw] * (1 - fx) + sg[p + sw + 1] * fx) * fy;
+      a[v * w + u] = Math.max(0, Math.min(255, Math.round((paper - gv) / span * 255)));
+    }
+  }
+  const r = { key, ppm, x0, y1, w, h, a, cvs:null, ink:'' };
+  conteCache.set(pg, r); return r;
+}
+function conteCanvas(r){
+  const ink = darkField() ? '255,255,255' : '20,26,44';
+  if (r.cvs && r.ink === ink) return r.cvs;
+  const cvs = canvasOf(r.w, r.h), cx = cvs.getContext('2d'), im = cx.createImageData(r.w, r.h), d = im.data, [R, G, B] = ink.split(',').map(Number);
+  for (let i = 0; i < r.a.length; i++){ d[i * 4] = R; d[i * 4 + 1] = G; d[i * 4 + 2] = B; d[i * 4 + 3] = r.a[i]; }
+  cx.putImageData(im, 0, 0); r.cvs = cvs; r.ink = ink; return cvs;
+}
+const contePageOf = i => conte.pages.find(p => p.set === i) || null;
+function drawConte(c){
+  if (!conte.show || !conte.pages.length) return;
+  const pg = contePageOf(ui.cur); if (!pg) return;
+  if (!pg.gray){ if (!pg.loading){ pg.loading = true; contePrep(pg).then(() => { pg.loading = false; render(); }).catch(() => { pg.loading = false; }); } return; }
+  const r = conteRect(pg, conte.drag === pg); if (!r) return;
+  const cvs = conteCanvas(r), [sx, sy] = w2s(r.x0, r.y1);
+  c.save(); c.globalAlpha = conte.alpha; c.imageSmoothingEnabled = true; c.drawImage(cvs, sx, sy, r.w / r.ppm * view.scale, r.h / r.ppm * view.scale); c.restore();
+  if (pg.dots && ui.mode === 'edit'){   // 拾った点で、まだ誰もいない所
+    const P0 = S.sets[ui.cur].pos, st = stepM(), rr = Math.max(6, dotRadius() + 3);
+    c.save(); c.strokeStyle = '#ff3d7f'; c.lineWidth = 2; c.setLineDash([4, 3]);
+    pg.dots.forEach(q => { if (S.performers.some(p => P0[p.id] && Math.hypot(P0[p.id][0] - q[0], P0[p.id][1] - q[1]) < st * 0.35)) return; const [x, y] = w2s(q[0], q[1]); c.beginPath(); c.arc(x, y, rr, 0, Math.PI * 2); c.stroke(); });
+    c.restore();
+  }
+}
+function drawConteHandles(c){
+  if (!conte.align || ui.mode !== 'edit') return; const pg = contePageOf(ui.cur); if (!pg) return;
+  c.save(); c.lineWidth = 2; c.strokeStyle = '#ff3d7f'; c.setLineDash([6, 4]);
+  c.beginPath(); pg.world.forEach((q, k) => { const [x, y] = w2s(...q); k ? c.lineTo(x, y) : c.moveTo(x, y); }); c.closePath(); c.stroke(); c.setLineDash([]);
+  pg.world.forEach(q => { const [x, y] = w2s(...q); c.beginPath(); c.arc(x, y, 9, 0, Math.PI * 2); c.fillStyle = 'rgba(255,61,127,.25)'; c.fill(); c.stroke(); c.beginPath(); c.moveTo(x - 5, y); c.lineTo(x + 5, y); c.moveTo(x, y - 5); c.lineTo(x, y + 5); c.stroke(); });
+  c.restore();
+}
+function conteHandleAt(sx, sy){ if (!conte.align || ui.mode !== 'edit') return -1; const pg = contePageOf(ui.cur); if (!pg) return -1; return pg.world.findIndex(q => { const [x, y] = w2s(...q); return Math.hypot(x - sx, y - sy) < 14; }); }
+async function conteImport(files){
+  if (!files.length) return;
+  conte.busy = 'コンテを読み込んでいます…'; renderSide();
+  const start = ui.cur, made = []; let added = 0;
+  const onPage = async (cvs, name) => {
+    const k = made.length, si = start + k;
+    if (si >= S.sets.length && conte.add){   // ページがセットより多い：最後のセットの並びのまま、セットを足す
+      if (!added) pushHist(); const last = S.sets[S.sets.length - 1];
+      S.sets.push({ name:'', counts:8, hold:0, bpm:null, pos:JSON.parse(JSON.stringify(last.pos)), sg:last.sg || 0 }); added++; ui.ver++;
+    }
+    const d = contePageDefaults(cvs), th = canvasOf(120, 120 * cvs.height / cvs.width);
+    th.getContext('2d').drawImage(cvs, 0, 0, th.width, th.height);
+    made.push({ name, blob:await blobOf(cvs), w:cvs.width, h:cvs.height, img:d.img, auto:d.auto, world:conteFieldCorners(), set:si < S.sets.length ? si : -1, thumb:th.toDataURL('image/jpeg', 0.7), gray:null });
+    cvs.width = cvs.height = 1;
+  };
+  try { for (const f of files) await contePagesFromFile(f, onPage); }
+  catch (e){ conte.busy = ''; if (added) changed(true); renderSide(); return toast('コンテを読み込めませんでした（PDF は通信できるときに開いてください）'); }
+  if (added) changed(true);
+  if (!made.length){ conte.busy = ''; renderSide(); return; }
+  conte.pages = conte.pages.concat(made); conte.show = true; conte.busy = '';
+  const miss = made.filter(p => !p.auto).length;
+  renderSide(); render();
+  toast(`コンテを${made.length}ページ読み込みました（「${setLabel(start)}」から1ページずつ${added ? `、セットを${added}つ足しました` : ''}）${miss ? `。${miss}ページは枠が見つからなかったので、「位置合わせ」で四隅を合わせてください` : ''}`);
+}
+/* 点を拾う：インクの地図から丸・四角の印を探す */
+// まずコンテのマス目の線（1歩ごと）の実際の位置を測る。紙のゆがみや四隅の合わせのずれがあっても、マス目に合わせて座標を読む
+function conteGrid(r){
+  const { w, h, a, ppm, x0, y1 } = r, st = stepM(), s = st * ppm, [hx, hy] = fieldHalf();
+  const K = Math.floor(hx / st + 1e-6), J = Math.floor(hy / st + 1e-6), NB = 12, win = Math.max(3, Math.round(s * 0.3));
+  const uOf = k => (k * st - x0) * ppm - 0.5, vOf = j => (y1 - j * st) * ppm - 0.5;
+  // 縦の線 k：u = c + d·v、横の線 j：v = c + d·u
+  function fit(pts, c0){
+    if (pts.length < 3) return { c:c0, d:0, wd:Math.max(1.5, s * 0.07), ok:false };
+    let use = pts;
+    for (let it = 0; it < 3; it++){
+      const n = use.length, mx = use.reduce((q, p) => q + p[0], 0) / n, my = use.reduce((q, p) => q + p[1], 0) / n;
+      let num = 0, den = 0; use.forEach(p => { num += (p[0] - mx) * (p[1] - my); den += (p[0] - mx) ** 2; });
+      const d = den ? num / den : 0, c = my - d * mx;
+      const res = pts.map(p => Math.abs(p[1] - (c + d * p[0]))), lim = Math.max(1.2, res.slice().sort((x, y) => x - y)[pts.length >> 1] * 3);
+      const nu = pts.filter((p, k) => res[k] <= lim); if (nu.length < 3 || it === 2) return { c, d, wd:pts.map(p => p[2]).sort((x, y) => x - y)[pts.length >> 1], ok:true }; use = nu;
+    }
+  }
+  function lines(vert){
+    const n = vert ? K : J, L = vert ? h : w, M = vert ? w : h, out = {}, prof = new Float64Array(2 * win + 1);
+    const lo = vert ? vOf(J) : uOf(-K), hi = vert ? vOf(-J) : uOf(K);   // フィールドの中だけ
+    for (let k = -n; k <= n; k++){
+      const c0 = vert ? uOf(k) : vOf(k), pts = [];
+      for (let b = 0; b < NB; b++){
+        const t0 = Math.max(0, Math.floor(lo + (hi - lo) * b / NB)), t1 = Math.min(L, Math.floor(lo + (hi - lo) * (b + 1) / NB)); if (t1 - t0 < 4) continue;
+        const ctr = Math.round(c0); prof.fill(0);
+        for (let t = t0; t < t1; t++) for (let o = -win; o <= win; o++){ const m = ctr + o; if (m < 0 || m >= M) continue; prof[o + win] += vert ? a[t * w + m] : a[m * w + t]; }
+        let bi = 0; for (let o = 1; o < prof.length; o++) if (prof[o] > prof[bi]) bi = o;
+        const base = prof.slice().sort((x, y) => x - y)[prof.length >> 2];
+        if (prof[bi] - base < (t1 - t0) * 35) continue;   // 線が見えない
+        let sub = 0; if (bi > 0 && bi < prof.length - 1){ const p0 = prof[bi - 1], p1 = prof[bi], p2 = prof[bi + 1], dd = p0 - 2 * p1 + p2; if (dd < 0) sub = 0.5 * (p0 - p2) / dd; }
+        const half = base + (prof[bi] - base) / 2; let wl = bi, wr = bi; while (wl > 0 && prof[wl - 1] > half) wl--; while (wr < prof.length - 1 && prof[wr + 1] > half) wr++;
+        pts.push([(t0 + t1) / 2, ctr - win + bi + sub, wr - wl + 1]);
+      }
+      out[k] = fit(pts, c0);
+    }
+    return out;
+  }
+  const V = lines(true), Hz = lines(false);
+  const lineAt = (T, kk) => { const a0 = T[Math.floor(kk)], a1 = T[Math.ceil(kk)]; if (!a0 || !a1) return null; const f = kk - Math.floor(kk); return { c:a0.c * (1 - f) + a1.c * f, d:a0.d * (1 - f) + a1.d * f }; };
+  // 節点（kk, jj：0.5 刻み）の画素の位置
+  function node(kk, jj){
+    const v = lineAt(V, kk), hz = lineAt(Hz, jj); if (!v || !hz) return null;
+    const vv = (hz.c + hz.d * v.c) / (1 - hz.d * v.d), uu = v.c + v.d * vv; return [uu, vv];
+  }
+  // 画素 → 歩（近くの線の間を割合で読む）
+  function toStep(u, v){
+    let k = (u + 0.5) / ppm + x0, j = y1 - (v + 0.5) / ppm; k /= st; j /= st;
+    for (let it = 0; it < 2; it++){
+      const k0 = clamp(Math.floor(k), -K, K - 1), j0 = clamp(Math.floor(j), -J, J - 1);
+      const uA = V[k0].c + V[k0].d * v, uB = V[k0 + 1].c + V[k0 + 1].d * v, vA = Hz[j0].c + Hz[j0].d * u, vB = Hz[j0 + 1].c + Hz[j0 + 1].d * u;
+      k = k0 + (u - uA) / ((uB - uA) || 1); j = j0 + (v - vA) / ((vB - vA) || 1);
+    }
+    return [k * st, j * st];
+  }
+  return { V, H:Hz, K, J, s, node, toStep };
+}
+function conteFindDots(r){
+  const { w, h, a } = r, G = conteGrid(r), s = G.s, ink = new Uint8Array(w * h);
+  for (let i = 0; i < a.length; i++) ink[i] = a[i] > 100 ? 1 : 0;
+  // マス目の線を消す（測った線の位置と太さで）
+  const keep = Uint8Array.from(ink);
+  const erase = (T, vert) => { for (const k in T){ const l = T[k], hw = Math.max(1.2, l.wd / 2 + 0.8); const L = vert ? h : w;
+    for (let t = 0; t < L; t++){ const c = l.c + l.d * t, m0 = Math.max(0, Math.ceil(c - hw)), m1 = Math.min((vert ? w : h) - 1, Math.floor(c + hw)); for (let m = m0; m <= m1; m++) keep[vert ? t * w + m : m * w + t] = 0; } } };
+  erase(G.V, true); erase(G.H, false);
+  // 残った長い線（枠の外の線など）も消す
+  const Lr = Math.max(8, Math.round(s * 1.3));
+  for (let y = 0; y < h; y++){ let x = 0; while (x < w){ if (!ink[y * w + x]){ x++; continue; } let e = x; while (e < w && ink[y * w + e]) e++; if (e - x >= Lr) for (let k = x; k < e; k++) keep[y * w + k] = 0; x = e; } }
+  for (let x = 0; x < w; x++){ let y = 0; while (y < h){ if (!ink[y * w + x]){ y++; continue; } let e = y; while (e < h && ink[e * w + x]) e++; if (e - y >= Lr) for (let k = y; k < e; k++) keep[k * w + x] = 0; y = e; } }
+  const I = new Uint32Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++){ let row = 0; for (let x = 0; x < w; x++){ row += keep[y * w + x]; I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + row; } }
+  const box = (x0, y0, x1, y1) => { x0 = clamp(x0, 0, w); x1 = clamp(x1, 0, w); y0 = clamp(y0, 0, h); y1 = clamp(y1, 0, h); return I[y1 * (w + 1) + x1] - I[y0 * (w + 1) + x1] - I[y1 * (w + 1) + x0] + I[y0 * (w + 1) + x0]; };
+  const NS = 16, rMin = Math.max(3, Math.round(s * 0.13)), rMax = Math.max(rMin + 2, Math.round(s * 0.38)), bw = Math.max(1.5, s * 0.06), R = Math.ceil(rMax + bw + 1);
+  const offs = [];
+  for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++){ const rr = Math.hypot(dx, dy); if (rr > R) continue; offs.push([dy * w + dx, Math.round(rr), Math.floor(((Math.atan2(dy, dx) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * NS) % NS]); }
+  const area = new Float32Array(R + 1); offs.forEach(o => area[o[1]]++);
+  const NO = offs.length, oO = Int32Array.from(offs, o => o[0]), oR = Int32Array.from(offs, o => o[1]), oC = Int32Array.from(offs, o => o[1] * NS + o[2]);
+  const cnt = new Float32Array((R + 1) * NS), tot = new Float32Array(R + 1), minInk = Math.round(2 * Math.PI * rMin * 0.5), Ro = Math.round(s * 0.55);
+  // (x, y) を中心とする丸・四角らしさ：まわりを囲む割合 − 中の塗り − すぐ外のインク
+  function score(x, y){
+    if (x < R || y < R || x >= w - R || y >= h - R) return -1e9;
+    if (box(x - R, y - R, x + R + 1, y + R + 1) < minInk) return -1e9;
+    cnt.fill(0); tot.fill(0); const p = y * w + x;
+    for (let q = 0; q < NO; q++) if (keep[p + oO[q]]){ cnt[oC[q]]++; tot[oR[q]]++; }
+    let best = -1e9;
+    for (let r0 = rMin; r0 <= rMax; r0++){
+      const lo = Math.max(0, Math.floor(r0 - bw)), hi = Math.min(R, Math.ceil(r0 + bw)); let cov = 0;
+      for (let k = 0; k < NS; k++){ let c = 0; for (let rb = lo; rb <= hi; rb++) c += cnt[rb * NS + k]; if (c >= 2) cov++; }
+      let fi = 0, fa = 0; for (let rb = 0; rb < lo - 1; rb++){ fi += tot[rb]; fa += area[rb]; }
+      const ri = hi + 2, oIn = box(x - ri, y - ri, x + ri + 1, y + ri + 1), oAll = box(x - Ro, y - Ro, x + Ro + 1, y + Ro + 1), oa = (2 * Ro + 1) ** 2 - (2 * ri + 1) ** 2;
+      const sc = cov - 12 * (fa ? fi / fa : 0) - 8 * (oa > 0 ? Math.max(0, oAll - oIn) / oa : 0); if (sc > best) best = sc;
+    }
+    return best;
+  }
+  const found = [];
+  // 1) マス目の節点（1歩・半歩）の上の印
+  const sr = Math.max(1, Math.round(s * 0.1));
+  for (let kk = -G.K; kk <= G.K + 1e-9; kk += 0.5) for (let jj = -G.J; jj <= G.J + 1e-9; jj += 0.5){
+    const nd = G.node(kk, jj); if (!nd) continue; const cx = Math.round(nd[0]), cy = Math.round(nd[1]);
+    let best = -1e9; for (let dy = -sr; dy <= sr; dy++) for (let dx = -sr; dx <= sr; dx++){ const v = score(cx + dx, cy + dy); if (v > best) best = v; }
+    if (best >= 9) found.push({ p:[kk * stepM(), jj * stepM()], sc:best, kind:Number.isInteger(kk) && Number.isInteger(jj) ? 'int' : 'half' });
+  }
+  // 2) 節点から外れた印（円・弧の隊形など）
+  const stp = Math.max(2, Math.round(s * 0.1)), loose = [];
+  for (let y = R; y < h - R; y += stp) for (let x = R; x < w - R; x += stp){ const v = score(x, y); if (v >= 11) loose.push({ x, y, sc:v }); }
+  loose.sort((p, q) => q.sc - p.sc);
+  const keptL = [], nmsL = s * 0.6;
+  for (const c of loose) if (keptL.every(k => (k.x - c.x) ** 2 + (k.y - c.y) ** 2 > nmsL * nmsL)) keptL.push(c);
+  keptL.forEach(c => { let bx = c.x, by = c.y, bs = c.sc; for (let dy = -stp; dy <= stp; dy++) for (let dx = -stp; dx <= stp; dx++){ const v = score(c.x + dx, c.y + dy); if (v > bs){ bs = v; bx = c.x + dx; by = c.y + dy; } } found.push({ p:G.toStep(bx, by), sc:bs, kind:'free' }); });
+  // 近いものは良いほうだけ（交点の上の印を優先）
+  const pri = f => f.sc + (f.kind === 'int' ? 3 : f.kind === 'half' ? 1 : 0);
+  found.sort((p, q) => pri(q) - pri(p));
+  const out = [], nms = stepM() * 0.45;
+  for (const f of found) if (out.every(o => (o.p[0] - f.p[0]) ** 2 + (o.p[1] - f.p[1]) ** 2 > nms * nms)) out.push(f);
+  return out;
+}
+// ハンガリー法（n ≤ m、cost は n×m）。各行に割り当てた列
+function hungarian(cost, n, m){
+  const INF = 1e18, u = new Float64Array(n + 1), v = new Float64Array(m + 1), p = new Int32Array(m + 1), way = new Int32Array(m + 1);
+  for (let i = 1; i <= n; i++){
+    p[0] = i; let j0 = 0; const minv = new Float64Array(m + 1).fill(INF), used = new Uint8Array(m + 1);
+    do { used[j0] = 1; const i0 = p[j0]; let d = INF, j1 = 0;
+      for (let j = 1; j <= m; j++) if (!used[j]){ const cur = cost[(i0 - 1) * m + j - 1] - u[i0] - v[j]; if (cur < minv[j]){ minv[j] = cur; way[j] = j0; } if (minv[j] < d){ d = minv[j]; j1 = j; } }
+      for (let j = 0; j <= m; j++){ if (used[j]){ u[p[j]] += d; v[j] -= d; } else minv[j] -= d; }
+      j0 = j1; } while (p[j0] !== 0);
+    do { const j1 = way[j0]; p[j0] = p[j1]; j0 = j1; } while (j0);
+  }
+  const res = new Int32Array(n).fill(-1); for (let j = 1; j <= m; j++) if (p[j]) res[p[j] - 1] = j - 1; return res;
+}
+// セット i のコンテから点を拾い、前のセットの位置から近い順に人を割り当てる
+async function contePick(i){
+  const pg = contePageOf(i); if (!pg) return null;
+  await contePrep(pg); const r = conteRect(pg, false); if (!r) return null;
+  const [hx, hy] = fieldHalf(), st = stepM(), g = gridStep(), P = S.performers.filter(p => !isDM(p)), n = P.length;
+  const found = conteFindDots(r).filter(d => Math.abs(d.p[0]) <= hx + st && Math.abs(d.p[1]) <= hy + st);
+  // 印はふつうマス目の交点（1歩ごと）にある。名前の文字はマス目の中（半歩の位置）に書かれることが多いので、交点の印を先に取り、
+  // 交点の印がずっと少ないページだけ、交点から外れた印（円・弧など）を、すでに取った印から離れたものだけ足す
+  // 自信のある印だけを使う（人数に合わせて無理に数をそろえると、文字を印と取り違えて人が一列ずれやすい）
+  let pts = found.filter(d => d.kind === 'int' && d.sc >= 12.5).sort((x, y) => y.sc - x.sc).slice(0, n);
+  if (pts.length < n * 0.85){   // 交点の印が少ないページ（円・弧などの隊形）
+    for (const d of found.filter(d => d.kind !== 'int' && d.sc >= 15).sort((x, y) => y.sc - x.sc)){
+      if (pts.length >= n) break;
+      if (pts.every(q => (q.p[0] - d.p[0]) ** 2 + (q.p[1] - d.p[1]) ** 2 > st * st)) pts.push(d);
+    }
+  }
+  pts = pts.map(d => ({ p:d.kind === 'free' && g > 0 ? snapP(d.p) : d.p, sc:d.sc }));
+  const prev = i > 0 ? S.sets[i - 1].pos : S.sets[i].pos, mC = pts.length, m = mC + n, pos = S.sets[i].pos, lost = [], used = new Set();
+  // 前の位置がまだない（全員が同じ所）ときは、後ろの列から、左から順に当てはめる
+  const pv = P.map(p => prev[p.id] || [0, 0]), flat = pv.every(q => Math.hypot(q[0] - pv[0][0], q[1] - pv[0][1]) < 1e-6);
+  if (flat){
+    const ord = pts.map((d, b) => b).sort((x, y) => (pts[y].p[1] - pts[x].p[1]) || (pts[x].p[0] - pts[y].p[0]));
+    P.forEach((p, a) => { if (a < ord.length){ pos[p.id] = [...pts[ord[a]].p]; used.add(ord[a]); } else lost.push(p.id); });
+    return { found:mC, placed:n - lost.length, lost, extra:mC - used.size };
+  }
+  // 誰がどの点か（名前の文字は読まないので、動きから推測する）
+  // 1回目：前の位置から動く距離の2乗の合計がいちばん小さくなる組み合わせ。動ける距離（カウント数から）を超える点には行かない
+  // 2回目：近くの人たちの動き（中央値）から自分の行き先を予想し、その予想に近い点を選ぶ。予想の近くに点がない人は「見つからない」にして、
+  //         まわりの人を押し出さない（点の見落としで一列ずれるのを防ぐ）
+  const C = +S.sets[i].counts || 0, reach = i > 0 ? (C > 0 ? C * 1.25 + 2 : 2) : 6, R2 = reach * reach;
+  const pvS = pv.map(q => [q[0] / st, q[1] / st]), ptS = pts.map(d => [d.p[0] / st, d.p[1] / st]);
+  const solve = (fn, miss) => { const cost = new Float64Array(n * m);
+    for (let a = 0; a < n; a++){ for (let b = 0; b < mC; b++){ const d2 = (ptS[b][0] - pvS[a][0]) ** 2 + (ptS[b][1] - pvS[a][1]) ** 2; cost[a * m + b] = d2 > R2 ? 1e12 : fn(a, b); } for (let b = mC; b < m; b++) cost[a * m + b] = miss; }
+    const asg = hungarian(cost, n, m); return Array.from(asg, (b, a) => b >= 0 && b < mC && cost[a * m + b] < 1e11 ? b : -1); };
+  const a1 = solve((a, b) => (ptS[b][0] - pvS[a][0]) ** 2 + (ptS[b][1] - pvS[a][1]) ** 2, 4 * R2);
+  const disp = a1.map((b, a) => b >= 0 ? [ptS[b][0] - pvS[a][0], ptS[b][1] - pvS[a][1]] : null), med = v => { const w = v.slice().sort((x, y) => x - y); return w.length ? w[w.length >> 1] : 0; };
+  const pred = pvS.map((q, a) => { const nb = pvS.map((r, b) => [Math.hypot(r[0] - q[0], r[1] - q[1]), b]).filter(x => x[1] !== a && disp[x[1]]).sort((x, y) => x[0] - y[0]).slice(0, 8);
+    if (!nb.length) return disp[a] ? [q[0] + disp[a][0], q[1] + disp[a][1]] : q; return [q[0] + med(nb.map(x => disp[x[1]][0])), q[1] + med(nb.map(x => disp[x[1]][1]))]; });
+  const a2 = solve((a, b) => (ptS[b][0] - pred[a][0]) ** 2 + (ptS[b][1] - pred[a][1]) ** 2, 16);
+  // 3回目：まだ誰もいない点に、まだ決まっていない人を近い順に置く（届く距離の点だけ。隊形の形をなるべくコンテどおりにする）
+  a2.forEach(b => { if (b >= 0) used.add(b); });
+  const la = P.map((p, a) => a).filter(a => a2[a] < 0), fb = pts.map((d, b) => b).filter(b => !used.has(b));
+  if (la.length && fb.length){
+    const m3 = fb.length + la.length;
+    const cost3 = new Float64Array(la.length * m3);
+    la.forEach((a, x) => { fb.forEach((b, y) => { const d2 = (ptS[b][0] - pvS[a][0]) ** 2 + (ptS[b][1] - pvS[a][1]) ** 2; cost3[x * m3 + y] = d2 > R2 ? 1e12 : d2; }); for (let y = fb.length; y < m3; y++) cost3[x * m3 + y] = 4 * R2; });
+    const r3 = hungarian(cost3, la.length, m3); la.forEach((a, x) => { const y = r3[x]; if (y >= 0 && y < fb.length && cost3[x * m3 + y] < 1e11) a2[a] = fb[y]; });
+  }
+  P.forEach((p, a) => { const b = a2[a]; if (b >= 0){ pos[p.id] = [...pts[b].p]; used.add(b); } else { if (i > 0) pos[p.id] = [...(prev[p.id] || pos[p.id])]; lost.push(p.id); } });
+  pg.dots = pts.map(d => d.p);
+  return { found:mC, placed:n - lost.length, lost, extra:mC - used.size };
+}
+async function contePickRun(mode){   // 'one'：今のセット、'after'：次のセットから後ろ、'all'：全部
+  const all = mode !== 'one', from = mode === 'after' ? ui.cur + 1 : 0;
+  const list = all ? conte.pages.filter(p => p.set >= from).map(p => p.set).sort((a, b) => a - b) : [ui.cur];
+  if (!list.length) return toast(mode === 'after' ? 'このセットより後ろにコンテのページがありません' : 'このセットにはコンテのページがありません');
+  if (!list.length || !contePageOf(list[0])) return toast('このセットにはコンテのページがありません');
+  pushHist(); let placed = 0, lostAll = new Set(), sets = 0;
+  for (const i of list){
+    conte.busy = `点を拾っています… ${setLabel(i)}`; renderSide(); await new Promise(r => setTimeout(r, 0));
+    const r = await contePick(i); if (!r) continue; sets++; placed += r.placed; r.lost.forEach(id => lostAll.add(id)); if (i === ui.cur) ui.sel = new Set(r.lost);
+    ui.ver++; applyAllFTL();
+  }
+  conte.busy = ''; changed(true); onSel();
+  const names = [...lostAll].slice(0, 6).map(id => (S.performers.find(p => p.id === id) || {}).label).join('・');
+  const fix = '誰がどの点かは前のセットからの動きで推測しています。人違いは、その人を正しい人の上に重ねるように動かすと入れ替わります';
+  toast(all ? `${sets}セットで点を拾って配置しました。${lostAll.size ? `見つからなかった人（${names}${lostAll.size > 6 ? ' ほか' : ''}）は前のセットの位置のままです。` : ''}${fix}`
+    : `点を拾って${placed}人を配置しました。${lostAll.size ? `見つからなかった${lostAll.size}人（選択中）は前のセットの位置のままです。` : ''}${fix}`);
+}
+function conteHTML(){
+  const pg = contePageOf(ui.cur), n = conte.pages.length;
+  let h = `<h2>コンテ</h2>
+  <div class="row"><label class="btn primary">コンテを読み込む（PDF・画像）<input type="file" id="conteIn" accept="application/pdf,.pdf,image/*" multiple hidden></label></div>
+  <p class="note">今のセット（${esc(setLabel(ui.cur))}）から、1ページずつ順にセットに当てはめます。フィールドの外枠（太い線の四角）を自動で探して、下に重ねて表示します。読み込んだコンテはこのブラウザの中だけで使い、保存はしません。</p>
+  <label class="row"><input type="checkbox" id="conteAdd" ${conte.add ? 'checked' : ''}>ページがセットより多いときは、セットを足す</label>`;
+  if (conte.busy) h += `<p class="note"><b>${esc(conte.busy)}</b></p>`;
+  if (!n) return h;
+  h += `<h2>表示</h2>
+  <label class="row"><input type="checkbox" id="conteShow" ${conte.show ? 'checked' : ''}>フィールドの下に表示する</label>
+  <div class="row"><span class="note">濃さ</span><input type="range" id="conteAlpha" min="0.1" max="1" step="0.05" value="${conte.alpha}" style="flex:1"></div>
+  <div class="row"><span class="note">このセットのページ</span><select id="contePage"><option value="-1">なし</option>${conte.pages.map((p, k) => `<option value="${k}" ${p === pg ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
+  <h2>位置合わせ</h2>
+  <div class="row"><button data-act="conteAlign" class="${conte.align ? 'on' : ''}" ${pg ? '' : 'disabled'}>${conte.align ? '位置合わせを終わる' : '四隅をドラッグして合わせる'}</button><button data-act="conteAuto" ${pg ? '' : 'disabled'}>自動で合わせ直す</button></div>
+  <p class="note">ピンク色の4つの点は、コンテの外枠の四隅です。コンテの線とフィールドの線が重なるようにドラッグしてください。${pg && !pg.auto ? '<b>このページは外枠を自動で見つけられませんでした。</b>' : ''}</p>
+  <h2>点を拾って配置</h2>
+  <div class="row"><button data-act="contePick" class="primary" ${pg ? '' : 'disabled'}>このセットの点を拾う</button><button data-act="contePickAfter">次のセットから後ろを拾う</button><button data-act="contePickAll">全部のセットで拾う</button></div>
+  <p class="note">コンテの丸・四角の印（マス目の交点の印を優先）を探して立ち位置にします。名前の文字は読まないので、誰がどの点かは前のセットからの動きで推測します。まっすぐ動く所はよく当たりますが、隊形が大きく変わる所は人違いが出やすいです。</p>
+  <p class="note"><b>直し方：</b>人違いの人を、本当の位置にいる人の上に重ねるように動かすと、2人が入れ替わります（コンテを下に敷いているセットだけ）。ピンクの点線の丸は、拾った点でまだ誰もいない所です。直したら「次のセットから後ろを拾う」で、そのあとのセットを推測し直せます。☆（ドラムメジャー）は動かしません。「元に戻す」で取り消せます。</p>
+  <h2>ページ</h2><div class="contelist">${conte.pages.map((p, k) => `<div class="row" style="align-items:center;gap:8px"><img src="${p.thumb}" alt="" style="width:60px;border:1px solid var(--line);border-radius:4px;background:#fff"><span class="grow note">${esc(p.name)}<br>→ ${p.set >= 0 && S.sets[p.set] ? esc(setLabel(p.set)) : 'セットなし'}${p.auto ? '' : '（要位置合わせ）'}</span><button data-act="conteGo" data-k="${k}" ${p.set >= 0 ? '' : 'disabled'}>開く</button></div>`).join('')}</div>
+  <div class="row"><button data-act="conteClear" class="danger">コンテを外す</button></div>`;
+  return h;
 }
 function renderSide(){
   if (ui.tab === 'sets') pane.innerHTML = setsHTML();
   else if (ui.tab === 'perf') pane.innerHTML = perfHTML();
   else if (ui.tab === 'dot') pane.innerHTML = dotHTML();
+  else if (ui.tab === 'conte') pane.innerHTML = conteHTML();
   else pane.innerHTML = confHTML();
   updateToolState();
 }
@@ -2356,7 +2844,7 @@ function setsViewHTML(an){
   S.sets.forEach((s, i) => {
     if (s.sg !== g) return;
     h += `<div class="set-row view ${i === ui.cur ? 'on' : ''}" data-set="${i}"><span class="num">${localNo(i)}</span><span class="nm">${esc(s.name)}</span>
-      <span class="mono">${i ? s.counts : 0}${s.hold ? '+' + s.hold : ''}</span><span class="mono">♩${bpmOf(i)}</span><span>${chipFor(i, an[i])}</span><span class="meta">${metaHTML(i)}</span></div>`;
+      <span class="mono">${i ? s.counts : 0}${s.hold ? '+' + s.hold : ''}</span><span class="mono">${tempoText(i)}</span><span>${chipFor(i, an[i])}</span><span class="meta">${metaHTML(i)}</span></div>`;
   });
   return h + `</div><p class="note">行を押すとそのセットに移ります。「16+4」は16カウントで移動して4カウント静止。ビューモードでは隊員を動かせません。</p>`;
 }
@@ -2420,7 +2908,7 @@ function setsHTML(){
       <input type="text" id="sn${i}" data-f="name" value="${esc(s.name)}" aria-label="セット名">
       <input type="number" id="sc${i}" data-f="counts" min="0" max="${MAX_COUNTS}" step="1" value="${i ? s.counts : 0}" ${i ? '' : 'disabled'} aria-label="移動カウント">
       <input type="number" id="sh${i}" data-f="hold" min="0" max="${MAX_COUNTS}" step="1" value="${s.hold}" aria-label="静止カウント">
-      <input type="number" id="sb${i}" data-f="bpm" min="30" max="300" step="1" value="${s.bpm || ''}" placeholder="${song.bpm}" aria-label="テンポ">
+      <input type="number" id="sb${i}" data-f="bpm" min="30" max="300" step="1" value="${beatMap(g) ? '' : s.bpm || ''}" placeholder="${beatMap(g) ? tempoText(i).slice(2) : song.bpm}" ${beatMap(g) ? 'disabled title="音源のテンポに合わせています（設定の「音源に合わせる」で切り替え）"' : ''} aria-label="テンポ">
       <span>${chipFor(i, an[i])}</span><span class="meta">${metaHTML(i)}</span></div>`;
   });
   h += `</div><p class="note">移動＝前のセットから何カウントで動くか。静止＝着いてから止まっているカウント。テンポが空欄のときはこの曲のテンポ（♩=${song.bpm}、下の再生バーで変更）。${g > 0 ? '1つ目のセットの「移動」は、前の曲の最後からの曲間の移動です。' : ''}全曲の合計は最大${MAX_COUNTS}カウント（♩=60で15分）まで。今は通しで${total()}カウントです。</p>`;
@@ -2525,7 +3013,7 @@ function dotHTML(){
 }
 function fieldSummary(){
   const f = S.field, t = f.type;
-  const name = { football:'アメフトフィールド', indoor:'体育館フロア', square:'正方形フロア', national:'正方形フロア・全国大会（青）', lime:'正方形フロア（黄緑）' }[t];
+  const name = { football:'アメフトフィールド', indoor:'体育館フロア', square:'正方形フロア', national:'正方形フロア・全国大会（青）', lime:'正方形フロア（ミントグリーン）' }[t];
   const size = t === 'football' ? `ハッシュ：${HASH[f.hash].n}・1歩22.5インチ` : isSq() ? `外${f.sqOuter}m・中${f.sqInner}m・1歩${f.stepCm}cm` : `${f.w}m×${f.d}m・1歩${f.stepCm}cm`;
   return `${name}（${size}）${f.podium.show ? '・指揮台あり' : ''}・${S.songs.length}曲`;
 }
@@ -2571,11 +3059,16 @@ function playConfHTML(){
   <div class="row"><input type="number" id="cfAvOff" step="10" min="-1000" max="1000" value="${ui.avOff}" aria-label="音ズレ補正"><span class="note">ミリ秒</span></div>
   <p class="note">再生で音が画面より遅れて聞こえるときはプラス、早いときはマイナスにします。Bluetoothイヤホンやスピーカーは 150〜250 くらいが目安です。この端末だけの設定で、保存する映像には影響しません。</p>
   <h2>音源に合わせる（曲ごと）</h2>
-  <p class="note">曲ごとに演奏の音声ファイルを読み込めます。通し再生では、曲が変わると次の曲の音源に切り替わります。テンポが曲と合っている必要があります。ファイルはこのブラウザの中だけで使われ、保存はされません。</p>
-  ${S.songs.map((g, k) => `<div class="audiorow"><div class="row"><b>${esc(g.name)}</b><span class="note">♩=${g.bpm}</span></div>
+  <p class="note">曲ごとに演奏の音声ファイルを読み込めます。読み込むと音源の拍を調べて、カウントを音源のテンポに合わせます（途中でテンポが変わる曲も、拍ごとに合わせます）。通し再生では、曲が変わると次の曲の音源に切り替わります。音声ファイルはこのブラウザの中だけで使われ、保存はされません（調べた拍の位置はショーに保存されます）。</p>
+  ${S.songs.map((g, k) => { const m = beatMap(k), busy = ui.beatBusy && ui.beatBusy[k];
+    return `<div class="audiorow"><div class="row"><b>${esc(g.name)}</b><span class="note">${m ? beatRangeText(k) + '（音源）' : '♩=' + g.bpm}</span></div>
     <div class="row"><label class="btn">音声ファイルを選ぶ<input type="file" data-audio="${k}" accept="audio/*" hidden></label>
     ${ui.audios[k] ? `<span class="note">${esc(ui.audios[k].name)}</span><button data-act="clearAudio" data-k="${k}">外す</button>` : '<span class="note">未読み込み（クリック音だけ）</span>'}</div>
-    <div class="row"><span class="note">開始位置</span><input type="number" data-off="${k}" step="0.05" min="0" value="${g.off}" aria-label="${esc(g.name)}の開始位置"><span class="note">秒（この曲のカウント0が音源の何秒目か）</span></div></div>`).join('')}
+    ${busy ? '<p class="note">音源のテンポを調べています…</p>' : ''}
+    ${g.beats ? `<label class="row"><input type="checkbox" data-sync="${k}" ${g.sync !== false ? 'checked' : ''}>音源のテンポに合わせる<span class="note">（${g.beats.length}拍）</span></label>` : ''}
+    ${ui.audios[k] && !busy ? `<div class="row"><button data-act="beatRedo" data-k="${k}">${g.beats ? 'テンポをもう一度調べる' : '音源のテンポを調べる'}</button></div>` : ''}
+    <div class="row"><span class="note">開始位置</span><input type="number" data-off="${k}" step="${m ? 0.001 : 0.05}" min="-30" value="${g.off}" aria-label="${esc(g.name)}の開始位置"><span class="note">秒（この曲のカウント0が音源の何秒目か）</span></div>
+    ${m ? `<div class="row"><span class="note">カウント1</span><button data-act="beatShift" data-k="${k}" data-d="-1">1拍前へ</button><button data-act="beatShift" data-k="${k}" data-d="1">1拍後へ</button><span class="note">音源の${fmtNum(m.b[Math.min(m.b.length - 1, m.k0 + 1)], 2)}秒の拍</span></div>` : ''}</div>`; }).join('')}
   <h2>ショートカット</h2>
   <dl class="keys"><dt>Space</dt><dd>再生・停止</dd><dt>[ ]</dt><dd>前・次のセット</dd><dt>矢印</dt><dd>選択中を1歩ずつ動かす（Shiftで4歩）</dd>
   <dt>Ctrl/⌘+Z</dt><dd>元に戻す（Shiftでやり直し）</dd><dt>Ctrl/⌘+A</dt><dd>全員を選択</dd><dt>Ctrl/⌘+C</dt><dd>選んだ人をコピー</dd><dt>Ctrl/⌘+V</dt><dd>コピーした人を複製</dd><dt>Ctrl/⌘+Shift+V</dt><dd>コピーした人の位置を今のセットに貼り付け</dd><dt>Esc</dt><dd>選択解除</dd><dt>右ドラッグ</dt><dd>画面を動かす（ビューモードでは左ドラッグでも）</dd></dl>`;
@@ -2598,6 +3091,7 @@ function applyColorInput(t){
 }
 pane.addEventListener('input', e => {
   if (e.target.type === 'color' && (e.target.id === 'pColor' || e.target.dataset.pcolor)){ applyColorInput(e.target); return; }
+  if (e.target.id === 'conteAlpha'){ conte.alpha = +e.target.value; render(); return; }
   if (e.target.id === 'rosterIn'){ ui.rosterText = e.target.value; const pv = $('#rosterPrev'); if (pv) pv.textContent = rosterPreview(); }
 });
 pane.addEventListener('toggle', e => { if (e.target.id === 'rosterBox') ui.rosterOpen = e.target.open; if (e.target.id === 'rotBox'){ ui.rotOpen = e.target.open; render(); } }, true);
@@ -2605,6 +3099,10 @@ pane.addEventListener('change', e => {
   const t = e.target, row = t.closest('.set-row[data-set]');
   if (t.type === 'color' && (t.id === 'pColor' || t.dataset.pcolor)){ applyColorInput(t); colorEdit = null; changed(true); return; }
   if (t.id === 'renumChk'){ ui.renum = t.checked; return; }
+  if (t.id === 'conteIn'){ const fs = [...(t.files || [])]; t.value = ''; conteImport(fs); return; }
+  if (t.id === 'conteAdd'){ conte.add = t.checked; return; }
+  if (t.id === 'conteShow'){ conte.show = t.checked; render(); return; }
+  if (t.id === 'contePage'){ const k = +t.value, old = contePageOf(ui.cur); if (old) old.set = -1; if (k >= 0 && conte.pages[k]) conte.pages[k].set = ui.cur; renderSide(); render(); return; }
   if (t.id === 'splitAt'){ ui.splitAt = Math.round(+t.value || 0); return; }
   if (t.id === 'rotDegIn'){ ui.rotDeg = clamp(Math.round(+t.value || 90), 1, 360); renderSide(); return; }
   if (t.id === 'rosterSec'){ ui.rosterSec = t.value; const pv = $('#rosterPrev'); if (pv) pv.textContent = rosterPreview(); return; }
@@ -2649,10 +3147,11 @@ pane.addEventListener('change', e => {
   if (t.id === 'setBar'){ pushHist(); if (t.value === '') delete S.sets[ui.cur].bar; else S.sets[ui.cur].bar = Math.round(+t.value); changed(true); return; }
   if (t.id === 'songMeter'){ pushHist(); S.songs[curSong()].meter = clamp(Math.round(+t.value || 4), 1, 12); changed(true); return; }
   if (t.id === 'cfAvOff'){ ui.avOff = clamp(Math.round(+t.value || 0), -1000, 1000); try { localStorage.setItem(LSKEY + '.avoff', ui.avOff); } catch (e) {} if (ui.playing) seekClock(ui.t); return; }
-  if (t.dataset.off != null){ const k = +t.dataset.off; if (S.songs[k]){ S.songs[k].off = Math.max(0, +t.value || 0); save(); } return; }
+  if (t.dataset.off != null){ const k = +t.dataset.off, sg = S.songs[k]; if (sg){ let v = clamp(+t.value || 0, -30, 36000); if (beatMap(k)) v = sg.beats[nearestBeat(sg.beats, v)]; sg.off = v; ui.ver++; save(); if (ui.playing) seekClock(ui.t); renderTop(); renderSongbar(); renderTimeline(); render(); } return; }
+  if (t.dataset.sync != null){ const k = +t.dataset.sync, sg = S.songs[k]; if (sg && sg.beats){ pushHist(); sg.sync = t.checked; changed(true); if (ui.playing) seekClock(ui.t); } return; }
   if (t.dataset.audio != null && t.files && t.files[0]){
-    const k = +t.dataset.audio, f = t.files[0], old = ui.audios[k]; if (old){ old.el.pause(); URL.revokeObjectURL(old.el.src); }
-    ui.audios[k] = { el:new Audio(URL.createObjectURL(f)), name:f.name, file:f }; renderSide(); toast(`「${S.songs[k].name}」の音源を読み込みました`); return;
+    const k = +t.dataset.audio, f = t.files[0], old = ui.audios[k]; if (old){ pauseAudio(old); URL.revokeObjectURL(old.el.src); }
+    ui.audios[k] = { el:new Audio(URL.createObjectURL(f)), name:f.name, file:f }; renderSide(); analyzeSongAudio(k); return;
   }
   if (row){
     const i = +row.dataset.set, s = S.sets[i], f = t.dataset.f; pushHist();
@@ -2977,7 +3476,16 @@ document.addEventListener('click', e => {
   else if (a === 'selNone'){ ui.sel.clear(); renderSide(); render(); }
   else if (a === 'copyDot'){ const p = S.performers.find(x => x.id === ui.focus); copyText(tsvFor(p, true), 'コピーしました'); }
   else if (a === 'copyAll'){ copyText(S.performers.map(p => tsvFor(p, true)).join('\n\n'), `${S.performers.length}人分をコピーしました`); }
-  else if (a === 'clearAudio'){ const k = +b.dataset.k, A = ui.audios[k]; if (A){ A.el.pause(); URL.revokeObjectURL(A.el.src); } ui.audios[k] = null; renderSide(); }
+  else if (a === 'conteAlign'){ conte.align = !conte.align; renderSide(); render(); }
+  else if (a === 'conteAuto'){ const pg = contePageOf(ui.cur); if (pg){ pg.world = conteFieldCorners(); render(); toast(pg.auto ? '自動で見つけた外枠に合わせ直しました' : 'このページは外枠が見つからなかったので、四隅をドラッグして合わせてください'); } }
+  else if (a === 'contePick'){ contePickRun('one'); }
+  else if (a === 'contePickAfter'){ contePickRun('after'); }
+  else if (a === 'contePickAll'){ contePickRun('all'); }
+  else if (a === 'conteGo'){ const p = conte.pages[+b.dataset.k]; if (p && p.set >= 0) goSet(p.set); }
+  else if (a === 'conteClear'){ conte.pages = []; conte.align = false; conteCache.clear(); conteLRU.length = 0; renderSide(); render(); }
+  else if (a === 'beatRedo'){ analyzeSongAudio(+b.dataset.k); }
+  else if (a === 'beatShift'){ const k = +b.dataset.k, sg = S.songs[k], m = beatMap(k); if (m){ pushHist(); sg.off = sg.beats[clamp(m.k0 + (+b.dataset.d), 0, sg.beats.length - 1)]; changed(true); if (ui.playing) seekClock(ui.t); } }
+  else if (a === 'clearAudio'){ const k = +b.dataset.k, A = ui.audios[k]; if (A){ pauseAudio(A); URL.revokeObjectURL(A.el.src); } ui.audios[k] = null; renderSide(); }
   else if (a === 'closeModal'){ $('#fileModal').hidden = true; }
   else if (a === 'saveFile'){ makeCode(S).then(code => saveOut(`${safeName(S.title)}.txt`, code, 'ファイルを保存しました。「ファイルを開く」で読み込めます')); }
   else if (a === 'savePng'){ savePng(); }
@@ -3111,6 +3619,122 @@ async function pickEnc(E, list){
   for (const [cfg, mux] of list){ try { const r = await E.isConfigSupported(cfg); if (r && r.supported) return [cfg, mux]; } catch (e) {} }
   return null;
 }
+/* ---------- 音源のテンポ（拍）を調べる ---------- */
+// 拍の時刻（秒）を音源から求める。bpms はこの曲で使っているテンポ（倍・半分の取り違えを防ぐ目安）
+function fftInPlace(re, im){
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++){ let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; if (i < j){ let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+  for (let len = 2; len <= n; len <<= 1){
+    const a = -2 * Math.PI / len, wr = Math.cos(a), wi = Math.sin(a), h = len >> 1;
+    for (let i = 0; i < n; i += len){ let cr = 1, ci = 0;
+      for (let k = 0; k < h; k++){ const p = i + k, q = p + h, tr = re[q] * cr - im[q] * ci, ti = re[q] * ci + im[q] * cr; re[q] = re[p] - tr; im[q] = im[p] - ti; re[p] += tr; im[p] += ti; const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr; } }
+  }
+}
+function onsetEnvelope(buf){
+  const ch = buf.numberOfChannels, sr = buf.sampleRate, f = Math.max(1, Math.round(sr / 11025)), n = Math.floor(buf.length / f), x = new Float32Array(n);
+  for (let c = 0; c < ch; c++){ const d = buf.getChannelData(c); for (let i = 0; i < n; i++){ let s = 0; for (let k = 0; k < f; k++) s += d[i * f + k]; x[i] += s / (f * ch); } }
+  const sr2 = sr / f, N = 512, hop = 128, frames = Math.max(0, 1 + Math.floor((n - N) / hop)), fps = sr2 / hop;
+  const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1));
+  const NB = 40, lo = 60, hi = Math.min(5000, sr2 / 2 - 1), band = new Int16Array(N / 2 + 1).fill(-1);
+  for (let b = 0; b <= N / 2; b++){ const fr = b * sr2 / N; if (fr >= lo && fr < hi) band[b] = Math.min(NB - 1, Math.floor(NB * Math.log(fr / lo) / Math.log(hi / lo))); }
+  const flux = new Float32Array(frames), rms = new Float32Array(frames), re = new Float32Array(N), im = new Float32Array(N), E = new Float32Array(NB), prev = new Float32Array(NB);
+  for (let t = 0; t < frames; t++){
+    const o = t * hop; let e2 = 0;
+    for (let i = 0; i < N; i++){ const v = x[o + i]; re[i] = v * win[i]; im[i] = 0; e2 += v * v; }
+    rms[t] = Math.sqrt(e2 / N); fftInPlace(re, im); E.fill(0);
+    for (let b = 0; b <= N / 2; b++) if (band[b] >= 0) E[band[b]] += Math.hypot(re[b], im[b]);
+    let fl = 0; for (let k = 0; k < NB; k++){ const L = Math.log1p(100 * E[k]); if (t) fl += Math.max(0, L - prev[k]); prev[k] = L; }
+    flux[t] = fl;
+  }
+  // ゆっくりした変化を引いて、標準偏差で割る
+  const K = (Math.round(fps * 0.4) | 1), hk = K >> 1, out = new Float32Array(frames); let acc = 0;
+  const cs = new Float64Array(frames + 1); for (let t = 0; t < frames; t++) cs[t + 1] = cs[t] + flux[t];
+  for (let t = 0; t < frames; t++){ const a = Math.max(0, t - hk), b = Math.min(frames, t + hk + 1); out[t] = Math.max(0, flux[t] - (cs[b] - cs[a]) / K); acc += out[t] * out[t]; }
+  let mean = 0; for (let t = 0; t < frames; t++) mean += out[t]; mean /= frames || 1;
+  let vv = 0; for (let t = 0; t < frames; t++) vv += (out[t] - mean) ** 2; const sd = Math.sqrt(vv / (frames || 1)) || 1;
+  for (let t = 0; t < frames; t++) out[t] /= sd;
+  return { o:out, rms, fps, t0:0.75 * N / sr2 };
+}
+// 8秒ずつの区間で周期を調べる（この曲のテンポの 0.75〜1.33 倍の範囲だけ）
+function localPeriods(o, fps, bpms){
+  const n = o.length, Wn = Math.min(n, Math.round(8 * fps)), H = Math.max(1, Math.round(fps)), l0 = Math.floor(fps * 60 / 260), l1 = Math.ceil(fps * 60 / 40);
+  const ok = l => bpms.some(b => { const bp = 60 * fps / l; return bp >= b * 0.7 && bp <= b * 1.4; });
+  const cen = [], per = [];
+  for (let s = 0; s + Wn <= n || (s === 0 && n); s += H){
+    const e = Math.min(n, s + Wn); let m = 0; for (let i = s; i < e; i++) m += o[i]; m /= (e - s) || 1;
+    let den = 0; for (let i = s; i < e; i++) den += (o[i] - m) ** 2; den = den || 1;
+    const ac = new Float64Array(l1 + 1);
+    for (let l = l0; l <= l1; l++){ let v = 0; for (let i = s; i + l < e; i++) v += (o[i] - m) * (o[i + l] - m); ac[l] = v / den; }
+    let best = -Infinity, bl = 0;
+    for (let l = l0; l <= l1; l++){ if (!ok(l)) continue; const v = ac[l] + (2 * l <= l1 ? 0.5 * ac[2 * l] : 0); if (v > best){ best = v; bl = l; } }
+    if (!bl) bl = Math.round(fps * 60 / bpms[0]);
+    let li = bl; const f = l => ac[l] + (2 * l <= l1 ? 0.5 * ac[2 * l] : 0);
+    if (bl > l0 && bl < l1 && ok(bl - 1) && ok(bl + 1)){ const a = f(bl - 1), b = f(bl), c = f(bl + 1), d = a - 2 * b + c; if (d < 0) li = bl + 0.5 * (a - c) / d; }
+    cen.push(s + (e - s) / 2); per.push(li);
+    if (e >= n) break;
+  }
+  const sm = per.map((_, k) => { const w = per.slice(Math.max(0, k - 2), k + 3).sort((a, b) => a - b); return w[w.length >> 1]; });
+  const P = new Float32Array(n);
+  for (let t = 0, k = 0; t < n; t++){ while (k < cen.length - 1 && cen[k + 1] < t) k++; if (t <= cen[0]) P[t] = sm[0]; else if (k >= cen.length - 1) P[t] = sm[sm.length - 1]; else P[t] = sm[k] + (sm[k + 1] - sm[k]) * (t - cen[k]) / (cen[k + 1] - cen[k]); }
+  return P;
+}
+// 動的計画法で拍を並べる（拍どうしの間隔が周期からずれるほど減点）
+function trackBeats(o, P){
+  const n = o.length, score = Float32Array.from(o), back = new Int32Array(n).fill(-1), A = 100;
+  for (let t = 0; t < n; t++){
+    const p = P[t], a = Math.max(0, Math.floor(t - 2 * p)), b = Math.floor(t - p / 2); if (b <= 0) continue;
+    let best = -Infinity, bj = -1;
+    for (let j = a; j < b; j++){ const r = Math.log((t - j) / p), v = score[j] - A * r * r; if (v > best){ best = v; bj = j; } }
+    if (bj >= 0){ score[t] = o[t] + best; back[t] = bj; }
+  }
+  const st = Math.max(0, Math.floor(n - P[n - 1])); let t = st; for (let j = st; j < n; j++) if (score[j] > score[t]) t = j;
+  const beats = [t]; while (back[t] >= 0){ t = back[t]; beats.push(t); }
+  return beats.reverse();
+}
+function detectBeats(buf, bpms){
+  const { o, rms, fps, t0 } = onsetEnvelope(buf); if (o.length < fps * 4) return null;
+  const P = localPeriods(o, fps, bpms), fr = trackBeats(o, P);
+  // 音が鳴り始める前・鳴り終わったあとの拍は捨てる
+  let mx = 0; for (let i = 0; i < rms.length; i++) mx = Math.max(mx, rms[i]);
+  const th = mx * 0.04; let a = 0, b = rms.length - 1; while (a < b && rms[a] < th) a++; while (b > a && rms[b] < th) b--;
+  const beats = fr.filter(t => t >= a - P[t] * 0.5 && t <= b + P[t] * 0.25).map(t => Math.round((t / fps + t0) * 1000) / 1000);
+  if (beats.length < 4) return null;
+  // 鳴り始める前にも同じ間隔で拍を足しておく。最初の音の拍をカウント1にするので、その1拍前（カウント0）は音源の始まりより前でもよい
+  const p0 = (beats[3] - beats[0]) / 3; let first = 0;
+  do { beats.unshift(Math.round((beats[0] - p0) * 1000) / 1000); first++; } while (beats[0] - p0 >= 0 && first < 16);
+  return { beats, first };
+}
+// 曲 g で使っているテンポ（曲のテンポとセットごとのテンポ）
+function songBpms(g){ const s = new Set([S.songs[g].bpm]); S.sets.forEach(st => { if ((st.sg || 0) === g && st.bpm) s.add(st.bpm); }); return [...s]; }
+const nearestBeat = (b, sec) => { let lo = 0, hi = b.length - 1; while (hi - lo > 1){ const m = (lo + hi) >> 1; if (b[m] <= sec) lo = m; else hi = m; } return Math.abs(b[hi] - sec) < Math.abs(b[lo] - sec) ? hi : lo; };
+async function analyzeSongAudio(g, quiet){
+  const A = ui.audios[g], song = S.songs[g]; if (!A || !song) return;
+  ui.beatBusy = ui.beatBusy || {}; ui.beatBusy[g] = true; renderSide();
+  if (!quiet) toast(`「${song.name}」の音源のテンポを調べています…`);
+  let res = null;
+  let bad = false;
+  try { const buf = await songBuffer(g); await new Promise(r => setTimeout(r, 30)); res = buf && detectBeats(buf, songBpms(g)); } catch (e) { res = null; bad = true; }
+  const beats = res && res.beats;
+  ui.beatBusy[g] = false;
+  if (ui.audios[g] !== A) return;   // 調べている間に外された・入れ替えられた
+  if (!beats){ renderSide(); return toast(bad ? 'この音声ファイルを読めなかったので、テンポは今の設定のままです（再生はできる場合があります。mp3・m4a・wav などで試してください）' : '音源から拍を見つけられませんでした。テンポは今の設定のままです'); }
+  pushHist();
+  // 初めて合わせるときは、音が鳴り始めた最初の拍をカウント1にする（カウント0はその1拍前）。合わせ直すときは今の開始位置にいちばん近い拍
+  const fresh = !song.beats && !song.off;
+  song.beats = beats; song.sync = true; song.off = fresh ? beats[res.first - 1] : beats[nearestBeat(beats, song.off || 0)];
+  changed(true);
+  const r = beatRangeText(g);
+  const k0 = nearestBeat(beats, song.off), c1 = beats[Math.min(beats.length - 1, k0 + 1)];
+  toast(`「${song.name}」を音源のテンポに合わせました（${r}）。カウント1は音源の${fmtNum(c1, 2)}秒目の拍です。ずれていたら「再生」の設定の「1拍前へ・1拍後へ」で直せます`);
+}
+// 曲の中のテンポの幅（表示用）
+function beatRangeText(g){
+  const m = beatMap(g); if (!m) return `♩=${S.songs[g].bpm}`;
+  const b = m.b, v = []; for (let i = 8; i < b.length; i += 4) v.push(60 * 8 / (b[i] - b[i - 8]));
+  if (!v.length) return '♩≈' + Math.round(60 / m.tail);
+  v.sort((x, y) => x - y); const lo = Math.round(v[Math.floor(v.length * 0.1)]), hi = Math.round(v[Math.floor(v.length * 0.9)]);
+  return lo === hi ? `♩≈${lo}` : `♩≈${lo}〜${hi}`;
+}
 async function songBuffer(g){
   const A = ui.audios[g]; if (!A) return null; if (A.buf) return A.buf;
   const ab = A.file ? await A.file.arrayBuffer() : await (await fetch(A.el.src)).arrayBuffer();
@@ -3164,7 +3788,7 @@ async function exportVideo(all){
         if (plan.music && ui.audios[z.g]){
           let buf = null; try { buf = await songBuffer(z.g); } catch (e) { toast(`「${S.songs[z.g].name}」の音源を読めませんでした`); }
           const offs = S.songs[z.g].off + (z.a - z.gs);
-          if (buf && offs < buf.duration){ const src = oc.createBufferSource(); src.buffer = buf; src.connect(oc.destination); src.start(0, offs); }
+          if (buf && offs < buf.duration){ const src = oc.createBufferSource(); src.buffer = buf; src.connect(oc.destination); if (offs >= 0) src.start(0, offs); else src.start(-offs, 0); }
         }
         if (plan.click){
           for (let k = Math.max(Math.floor(r0 + 1e-6) + 1, Math.ceil(countAtSec(z.a) - 1e-6)); k <= r1 + 1e-6; k++){
@@ -3262,9 +3886,9 @@ async function saveVideoRT(all){
   const T = tl(), A = () => plan.music ? audioOf(song) : null;
   const switchSong = sec => {
     const g = songAtT(Math.min(countAtSec(sec), r1)); if (g === song) return;
-    const old = A(); if (old) old.el.pause();
+    const old = A(); pauseAudio(old);
     song = g; const a = A();
-    if (a){ try { a.el.currentTime = Math.max(0, S.songs[g].off + (sec - secAt(songRange(g)[0]))); a.el.play().catch(() => {}); } catch (e) {} }
+    if (a) playAudioAt(a, S.songs[g].off + (sec - secAt(songRange(g)[0])));
   };
   $('#recModal').hidden = false; mr.start(500); const tRec = performance.now();
   switchSong(s0);
@@ -3293,7 +3917,7 @@ async function saveVideoRT(all){
     };
     requestAnimationFrame(step);
   });
-  { const a = A(); if (a) a.el.pause(); }
+  { const a = A(); pauseAudio(a); }
   const recMs = performance.now() - tRec; mr.stop(); await done;
   if (dest){ try { bus.disconnect(dest); } catch (e) {} dest.stream.getTracks().forEach(t => t.stop()); }
   vStream.getTracks().forEach(t => t.stop());

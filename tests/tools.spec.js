@@ -70,13 +70,13 @@ test('大会のルール：時間オーバーとフロアの外を見つける',
   await loadFixture(page);
   const r = await page.evaluate(() => {
     const D = __db, S = D.S; D.pushHist();
-    S.rules.limit = 20; S.sets[2].pos[S.performers[0].id] = [16, 0]; D.changed(true);
+    S.rules.limit = 20; S.rules.on.time = true; S.sets[2].pos[S.performers[0].id] = [16, 0]; D.changed(true);
     const c = D.ruleCheck(); return { over:c.over > 0, outside:c.outside.map(x => x.i), parse:[D.parseMS('6:00'), D.parseMS('6'), D.parseMS('360')] };
   });
   expect(r.over).toBe(true);
   expect(r.outside).toContain(2);
   expect(r.parse).toEqual([360, 360, 360]);
   await page.evaluate(() => { __db.goSet(2); __db.openTab('sets'); });
-  await expect(page.locator('#pane')).toContainText('フロアの外');
+  await expect(page.locator('#pane')).toContainText('エリアの外');
   await expect(page.locator('#songbar')).toContainText('制限 0:20');
 });

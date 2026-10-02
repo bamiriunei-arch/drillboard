@@ -7,17 +7,19 @@ test('保存データを書き出して読み直しても同じ（メモ・版�
   await loadFixture(page);
   const r = await page.evaluate(async () => {
     const D = __db, S = D.S; D.pushHist();
-    S.sets[2].pn = { [S.performers[0].id]:'ベルアップ' }; S.performers[1].note = '左きき'; S.rules.limit = 300; S.rules.inside = false; D.changed(true);
+    S.sets[2].pn = { [S.performers[0].id]:'ベルアップ' }; S.performers[1].note = '左きき'; D.applyPreset('jmba_hs'); S.rules.on.floor = false; S.rules.entry = 40; S.songs[0].url = 'audio/op.mp3'; D.changed(true);
     const code = await D.makeCode(S), sh = await D.readCode(code);
     const strip = x => JSON.stringify(D.packShow(x));
-    return { same:strip(sh) === strip(S), id:sh.id === S.id, up:sh.updated === S.updated, note:sh.sets[1].note, pn:sh.sets[2].pn, pnote:sh.performers[1].note, rules:sh.rules };
+    return { same:strip(sh) === strip(S), id:sh.id === S.id, up:sh.updated === S.updated, note:sh.sets[1].note, pn:sh.sets[2].pn, pnote:sh.performers[1].note, rules:[sh.rules.preset, sh.rules.limit, sh.rules.entry, sh.rules.on.floor, sh.rules.on.time, sh.rules.grp.length], url:sh.songs[0].url, songId:sh.songs[0].id === S.songs[0].id };
   });
   expect(r.same).toBe(true);
   expect(r.id).toBe(true);
   expect(r.up).toBe(true);
   expect(r.note).toBe('ここで楽器を構える');
   expect(r.pnote).toBe('左きき');
-  expect(r.rules).toEqual({ limit:300, inside:false });
+  expect(r.rules).toEqual(['jmba_hs', 570, 40, false, true, 3]);
+  expect(r.url).toBe('audio/op.mp3');
+  expect(r.songId).toBe(true);
   await noErrors(errors);
 });
 

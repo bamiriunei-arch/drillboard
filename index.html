@@ -381,6 +381,35 @@ label.row>input[type=checkbox],label.row>input[type=radio]{flex:none;margin-top:
 .row>label.row+label.row{margin-left:10px}
 @media (max-width:980px){ body.big .canvas-wrap{height:calc(100vh - 150px);height:calc(100dvh - 150px);min-height:320px} }
 @media (orientation:portrait){ .bc-num{font-size:min(28vw,20vh)} .bc-set{font-size:clamp(14px,4.2vw,26px)} .bc-sub,.bc-note,.bc-next{font-size:clamp(12px,3.6vw,22px)} .bc-note,.bc-next{max-width:90vw} }
+/* ---------- v10 ---------- */
+.notelist{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.notelist-item{display:flex;gap:6px;align-items:baseline;font-size:12px}
+.notelist-item.on{background:var(--accent-soft);border-radius:6px;padding:2px 4px}
+.notelist-item span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.rulebox{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:8px;padding:10px}
+.rule-sub{margin-left:24px;display:flex;flex-direction:column;gap:4px}
+.rule-sub.row{flex-direction:row}
+.rulenotes{margin:6px 0;padding-left:18px;font-size:12px;display:flex;flex-direction:column;gap:3px}
+.taskrow{font-size:12px;padding-left:12px}
+.linkprev{white-space:pre-wrap;word-break:break-all;font-family:var(--mono);font-size:11px;background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:6px;max-height:180px;overflow:auto;margin:0}
+.srcbox{display:flex;flex-direction:column;gap:6px}
+.volrow label{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)}
+.volrow input[type=range]{width:110px}
+#bBell{white-space:nowrap}
+.cp-qr{display:flex;align-items:center;gap:2mm;font-size:7pt;color:#333}
+.cp-qr svg{width:24mm;height:24mm;flex:none}
+.cp-panel.w .cp-qr svg{width:20mm;height:20mm}
+.pp.part{display:flex;flex-direction:column;gap:2.5mm;font-size:8pt}
+.pt-tbl{border-collapse:collapse;width:100%;font-size:7.5pt;table-layout:fixed}
+.pt-tbl th,.pt-tbl td{border:1px solid #666;padding:.8mm 1mm;text-align:left;vertical-align:top;white-space:normal;background:none;color:#000;word-break:break-word}
+.pt-tbl th{background:#eee;font-size:8pt}
+.pt-tbl th:first-child{width:16mm}.pt-tbl th:nth-child(2){width:11mm}.pt-tbl th:last-child{width:30mm}
+.pt-tbl tr{break-inside:avoid}
+.pt-tbl td small{color:#555;font-size:6.5pt}
+.pt-tbl td.num{font-family:var(--mono);font-weight:600}
+.pt-tbl .songrow td{background:#f0f0f0;font-weight:700}
+.pt-tbl .rm{border:1px solid #000;padding:0 1mm;font-family:var(--mono);font-size:7pt;color:#000}
+.pt-tbl td.pnote{font-size:7pt}
 </style>
 <style id="printPageStyle"></style>
 </head>
@@ -447,6 +476,7 @@ label.row>input[type=checkbox],label.row>input[type=radio]{flex:none;margin-top:
           <button data-move="circle-cw" title="グループの中心のまわりを回って移動（右回り）。位置が同じなら1周します">円↻</button>
           <button data-move="circle-ccw" title="グループの中心のまわりを回って移動（左回り）。位置が同じなら1周します">円↺</button>
           <button id="bRot" title="中心を決めて、隊形ごと円で回す（右のパネルが開きます）">中心で回す…</button>
+          <button id="bBell" title="選んだ人（いなければ全員）を、このセットでベルフロント（客席に向けたまま）に。もう一度押すとやめる">ベルフロント</button>
         </div>
         <div class="tgroup edit-only" id="xformTools">
           <span class="tlabel">変形</span>
@@ -538,6 +568,7 @@ label.row>input[type=checkbox],label.row>input[type=radio]{flex:none;margin-top:
     <h3 class="shh link-only">iPhone・ほかの端末に送る</h3>
     <div class="row link-only"><button data-act="shareLink" class="primary">共有リンクを送る…</button><button data-act="copyLink">共有リンクをコピー</button></div>
     <p class="note link-only">リンクを開くと、このショーがそのまま開きます（ショー一覧にも入ります）。ショーのデータはリンクの中に入っていて、どこのサーバーにも送られません。LINE・メッセージ・AirDrop などで送ってください。</p>
+    <div id="fileExtras"></div>
     <h3 class="shh">印刷・PDF</h3>
     <div class="row"><button data-act="openPrint" class="primary">コンテ・ドットシートを印刷・PDF…</button></div>
     <h3 class="shh dl-only">画像・映像で保存</h3>
@@ -846,7 +877,8 @@ function normalize(sh){
   if (typeof sh.id !== 'string' || !/^[A-Za-z0-9_-]{4,24}$/.test(sh.id)) sh.id = newShowId();
   sh.updated = Number.isFinite(+sh.updated) && +sh.updated > 0 ? Math.round(+sh.updated) : 0;
   if (sh.part != null && String(sh.part).trim()) sh.part = String(sh.part).trim().slice(0, 20); else delete sh.part;
-  sh.rules = { limit:clamp(Math.round(+(sh.rules && sh.rules.limit) || 0), 0, 3600), inside:!(sh.rules && sh.rules.inside === false) };
+  sh.rules = normRules(sh.rules);
+  if (typeof sh.src === 'string' && SRC_RE.test(sh.src.trim())) sh.src = sh.src.trim(); else delete sh.src;
   if (!sh.sets.length) sh.sets.push({ name:'Set 1', counts:0, hold:0, bpm:null, pos:{} });
   sh.performers.forEach(p => { if (typeof p.note === 'string' && p.note.trim()) p.note = p.note.trim().slice(0, 200); else delete p.note; });
   sh.performers.forEach(p => { p.id = String(p.id); p.label = String(p.label ?? p.id); if (!SECTIONS.some(s => s.k === p.sec)) p.sec = 'Ot'; if (typeof p.c === 'string' && HEX.test(p.c) && p.sec !== 'DM') p.c = p.c.toLowerCase(); else delete p.c; });
@@ -880,6 +912,7 @@ function normalize(sh){
     });
   });
   // 曲：各セットは曲番号 sg を持ち、曲の順に並ぶ。セットのない曲は消す
+  { const seen = new Set(); sh.songs.forEach(g => { if (typeof g.id !== 'string' || !/^[a-z0-9]{3,12}$/i.test(g.id) || seen.has(g.id)) g.id = Math.random().toString(36).slice(2, 9); seen.add(g.id); if (typeof g.url === 'string' && g.url.trim()) g.url = g.url.trim().slice(0, 600); else delete g.url; }); }
   sh.songs.forEach((g, k) => { g.name = String(g.name || `${k + 1}曲目`); g.bpm = clamp(+g.bpm || 120, 30, 300); g.meter = clamp(Math.round(+g.meter || 4), 1, 12); g.off = clamp(+g.off || 0, -30, 36000); g.bar0 = Number.isFinite(+g.bar0) && g.bar0 !== null && g.bar0 !== '' ? Math.round(+g.bar0) : 1;
     if (Array.isArray(g.beats) && g.beats.length >= 4 && g.beats.every((v, i) => Number.isFinite(+v) && (i === 0 || +v > +g.beats[i - 1]))){ g.beats = g.beats.map(Number); g.sync = g.sync !== false; } else { delete g.beats; delete g.sync; } });
   let lastSg = 0;
@@ -910,7 +943,7 @@ function packShow(sh, bare){
   const ids = sh.performers.map(p => p.id), idx = new Map(ids.map((id, i) => [id, i]));
   const U = STEP_OF(sh.field) / 8, UQ = v => Math.round(v / U), onU = v => Math.abs(v / U - Math.round(v / U)) < 1e-4;
   const o = { v:3, t:sh.title };
-  if (!bare){ if (sh.id) o.id = sh.id; if (sh.updated) o.u = Math.round(sh.updated / 1000); if (sh.part) o.me = sh.part; }
+  if (!bare){ if (sh.id) o.id = sh.id; if (sh.updated) o.u = Math.round(sh.updated / 1000); if (sh.part) o.me = sh.part; if (sh.src) o.src = sh.src; }
   const f = { type:sh.field.type }; for (const k in DEF_FIELD) if (sh.field[k] != null && sh.field[k] !== DEF_FIELD[k]) f[k] = sh.field[k];
   const pd = sh.field.podium || {}; if (pd.show === false) f.ps = 0; if (pd.gap != null && pd.gap !== 1.5) f.pg = pd.gap;
   o.f = f;
@@ -919,9 +952,11 @@ function packShow(sh, bare){
   const au = sh.auto || {}; if (au.on === false) c.ao = 0; if (au.maxAdd != null && au.maxAdd !== 8) c.am = au.maxAdd; if (au.byBar === false) c.ab = 0;
   const off = DISP_KEYS.filter(k => sh.display && sh.display[k] === false); if (off.length) c.dh = off;
   if (sh.partColors && Object.keys(sh.partColors).length) c.pc = Object.assign({}, sh.partColors);
-  if (sh.rules){ if (sh.rules.limit) c.tl = sh.rules.limit; if (sh.rules.inside === false) c.fi = 0; }
+  if (sh.rules){ if (sh.rules.limit) c.tl = sh.rules.limit; if ((sh.rules.on && sh.rules.on.floor != null ? !!sh.rules.on.floor : sh.rules.inside !== false) === false) c.fi = 0; const rx = rulesPack(sh.rules); if (rx) c.rx = rx; }
   if (Object.keys(c).length) o.c = c;
   o.g = sh.songs.map(g => { const a = [g.name, g.bpm, g.meter, g.off, g.bar0 != null ? g.bar0 : 1], d = [null, null, 4, 0, 1];
+    const sid = !bare && g.id ? g.id : 0, url = g.url || 0;
+    if (sid || url){ a.push(Array.isArray(g.beats) && g.beats.length >= 4 ? packBeats(g.beats) : 0, g.sync === false ? 0 : 1, sid); if (url) a.push(url); return a; }   // 曲の印・音源のURL
     if (Array.isArray(g.beats) && g.beats.length >= 4){ a.push(packBeats(g.beats)); if (g.sync === false) a.push(0); return a; }  // 音源から調べた拍
     while (a.length > 2 && a[a.length - 1] === d[a.length - 1]) a.pop(); return a; });
   const cnt = {};
@@ -965,8 +1000,8 @@ function unpackV3(o){
   const disp = {}; DISP_KEYS.forEach(k => disp[k] = !(c.dh || []).includes(k));
   const sh = { v:1, title:o.t, field, snap:c.sn != null ? c.sn : 1, freeStride:!!c.fs, turnDur:c.u != null ? c.u : 1, maxN:c.x || 8,
     auto:{ on:c.ao !== 0, maxAdd:c.am != null ? c.am : 8, byBar:c.ab !== 0 }, display:disp, ...(c.pc ? { partColors:Object.assign({}, c.pc) } : {}),
-    ...(o.id ? { id:String(o.id) } : {}), ...(o.u ? { updated:o.u * 1000 } : {}), ...(o.me ? { part:String(o.me) } : {}), rules:{ limit:c.tl || 0, inside:c.fi !== 0 },
-    songs:(o.g || []).map(a => { const g = { name:a[0], bpm:a[1], meter:a[2] != null ? a[2] : 4, off:a[3] || 0, bar0:a[4] != null ? a[4] : 1 }, bt = unpackBeats(a[5]); if (bt){ g.beats = bt; g.sync = a[6] !== 0; } return g; }),
+    ...(o.id ? { id:String(o.id) } : {}), ...(o.u ? { updated:o.u * 1000 } : {}), ...(o.me ? { part:String(o.me) } : {}), ...(o.src ? { src:String(o.src) } : {}), rules:Object.assign({ limit:c.tl || 0, inside:c.fi !== 0 }, c.rx && typeof c.rx === 'object' ? c.rx : {}),
+    songs:(o.g || []).map(a => { const g = { name:a[0], bpm:a[1], meter:a[2] != null ? a[2] : 4, off:a[3] || 0, bar0:a[4] != null ? a[4] : 1 }, bt = unpackBeats(a[5]); if (bt){ g.beats = bt; g.sync = a[6] !== 0; } if (typeof a[7] === 'string' && a[7]) g.id = a[7]; if (typeof a[8] === 'string' && a[8]) g.url = a[8]; return g; }),
     performers:perf, sets:[] };
   let prev = null; const inSong = {};
   (o.s || []).forEach(r => {
@@ -1149,7 +1184,7 @@ function afterLoad(refit){
   ui.sel = new Set([...ui.sel].filter(id => ids.has(id)));
   if (ui.focus && !ids.has(ui.focus)) ui.focus = null;
   if (refit){ fit(); ui.libId = null; ui.changedSets = null; ui.loopAB = null; ui.collSug = null; maybeSnap('day'); checkNudge(); }  // 別の所から読み込んだショーは、一覧のショーとは別もの
-  changed(true);
+  changed(true); audRestore();
   // 曲名の並びなどで画面の高さが変わることがあるので、描き直したあとでもう一度全体を合わせる
   if (refit) requestAnimationFrame(() => requestAnimationFrame(() => { fit(); render(); }));
 }
@@ -1859,7 +1894,7 @@ function lastTurn(i, id){  // セット i に着いたときの向き
 const faceVec = deg => [Math.cos(deg * Math.PI / 180), Math.sin(deg * Math.PI / 180)];
 const vecDeg = v => Math.round(Math.atan2(v[1], v[0]) * 180 / Math.PI);
 const normDeg = d => ((Math.round(d) % 360) + 360) % 360;
-const MV_MODES = [['f', '前進'], ['b', '後退'], ['l', '体を左90°'], ['r', '体を右90°'], ['a', '正面を向いたまま']];
+const MV_MODES = [['f', '前進'], ['b', '後退'], ['l', '体を左90°'], ['r', '体を右90°'], ['a', 'ベルフロント']];
 function mvOf(i, id){ const s = S.sets[i]; return (s && s.mv && s.mv[id]) || 'f'; }
 function bodyDir(i, id, v){  // 進む向き v → 体の向き
   if (!v) return v; const m = mvOf(i, id);
@@ -1969,6 +2004,7 @@ function render(){
     c.restore();
   }
   drawDistances(c, P, fb);
+  drawRuleArea(c);
   drawGap(c, P);
   drawWaypoints(c, fb);
   if (!ui.offscreen){ drawRotCenter(c, fb); drawConteHandles(c); drawAssign(c); }
@@ -1977,12 +2013,12 @@ function render(){
   const order = [...S.performers].sort((a, b) => (ui.sel.has(a.id) ? 1 : 0) - (ui.sel.has(b.id) ? 1 : 0));
   const showLbl = S.display.labels && r >= 10, showSmall = S.display.labels && !showLbl && view.scale * stepM() >= 5;
   const soloOn = ui.solo && ui.sel.size > 0, TL = tl(), showDir = S.display.dirs && S.performers.length <= 150;
-  const outNow = !ui.offscreen && S.rules && S.rules.inside, mePerf = ui.me && !ui.offscreen ? findPerf(ui.me) : null, meId = mePerf ? mePerf.id : null;
+  const outNow = !ui.offscreen && S.rules && S.rules.on && S.rules.on.floor, mePerf = ui.me && !ui.offscreen ? findPerf(ui.me) : null, meId = mePerf ? mePerf.id : null;
   order.forEach(p => {
     const q = P[p.id]; if (!q) return; const [sx, sy] = w2s(q[0], q[1]); const sec = secOf(p.sec), dm = isDM(p), rr = dm ? r * 1.3 : r;
-    c.globalAlpha = (soloOn && !ui.sel.has(p.id)) || (ui.printFocus && ui.printFocus !== p.id) ? (ui.printFocus ? 0.28 : 0.35) : 1;
+    c.globalAlpha = (soloOn && !ui.sel.has(p.id)) || (ui.printFocus && ui.printFocus !== p.id) || (ui.printFocusSet && !ui.printFocusSet.has(p.id)) ? (ui.printFocus || ui.printFocusSet ? 0.28 : 0.35) : 1;
     if (hot.has(p.id)){ c.beginPath(); c.arc(sx, sy, rr + 6, 0, Math.PI * 2); c.fillStyle = 'rgba(230,40,30,.45)'; c.fill(); }
-    if (outNow && !dm && !inFloor(q)){ c.save(); c.setLineDash([3, 3]); c.beginPath(); c.arc(sx, sy, rr + 5, 0, Math.PI * 2); c.strokeStyle = '#ff3b30'; c.lineWidth = 2; c.stroke(); c.restore(); }
+    { const fs = outNow && !dm ? floorState(q) : 0; if (fs){ c.save(); c.setLineDash([3, 3]); c.beginPath(); c.arc(sx, sy, rr + 5, 0, Math.PI * 2); c.strokeStyle = fs === 2 ? '#ff3b30' : '#ff9500'; c.lineWidth = 2; c.stroke(); c.restore(); } }
     if (meId === p.id){ c.beginPath(); c.arc(sx, sy, rr + 4, 0, Math.PI * 2); c.arc(sx, sy, rr + 8.5, 0, Math.PI * 2); c.strokeStyle = '#FFD60A'; c.lineWidth = 2.2; c.stroke(); }
     if (ui.sel.has(p.id)){ c.beginPath(); c.arc(sx, sy, rr + 3.5, 0, Math.PI * 2); c.strokeStyle = fb ? '#FFE066' : '#1D4ED8'; c.lineWidth = 3; c.stroke(); }
     if (ui.tab === 'dot' && ui.focus === p.id){ c.beginPath(); c.arc(sx, sy, rr + 7, 0, Math.PI * 2); c.strokeStyle = fb ? '#FFE066' : '#1D4ED8'; c.lineWidth = 2; c.stroke(); }
@@ -2499,9 +2535,10 @@ function audioBus(){
 }
 function click(accent, at, force){
   if (!actx || (!ui.metro && !force)) return;
+  const vol = ui.clickVol == null ? 1 : ui.clickVol; if (vol <= 0.001) return;
   const B = audioBus(); if (!B) return;
-  const o = actx.createOscillator(), g = actx.createGain(), t = Math.max(actx.currentTime, at || 0);
-  o.frequency.value = accent ? 1760 : 1100; g.gain.setValueAtTime(accent ? .32 : .18, t); g.gain.exponentialRampToValueAtTime(.001, t + .05);
+  const sub = accent === 'sub', o = actx.createOscillator(), g = actx.createGain(), t = Math.max(actx.currentTime, at || 0);
+  o.frequency.value = sub ? 880 : accent ? 1760 : 1100; g.gain.setValueAtTime((sub ? .1 : accent ? .32 : .18) * vol, t); g.gain.exponentialRampToValueAtTime(.001, t + .05);
   o.connect(g).connect(B); o.start(t); o.stop(t + .06); return o;
 }
 // 曲の音源を録音に乗せるため、音源の出力を bus 経由にする（一度つなぐと元に戻せないので録画時だけ）
@@ -2510,7 +2547,7 @@ function routeAudio(A){
   const B = audioBus(); if (!B) return false;
   try { A.node = actx.createMediaElementSource(A.el); A.node.connect(B); return true; } catch (e) { return false; }
 }
-function isAccent(){ return false; }  // クリック音はセットの頭も含めてすべて同じ音
+function isAccent(T, n){ return clickAccentAt(n); }  // 「小節の頭を高い音に」をオンにしたときだけ、小節の1拍目を高い音に
 function play(){
   if (ui.playing) return stop();
   startPlay();
@@ -2529,7 +2566,7 @@ function startPlay(){
 // 再生中の時計を t（カウント）に合わせ直す。音源があれば音源をその位置から鳴らす
 function seekClock(t){
   const old = audioOf(ui.playSong); pauseAudio(old);
-  ui.t = t; ui.playT0 = t; ui.p0 = secAt(t); ui.w0 = performance.now(); ui.nextClick = Math.floor(t + 1e-6) + 1; ui.vLast = Math.floor(t + 1e-6);
+  ui.t = t; ui.playT0 = t; ui.p0 = secAt(t); ui.w0 = performance.now(); ui.nextClick = firstClick(t); ui.vLast = Math.floor(t + 1e-6);
   ui.playSong = -1; syncAudio(ui.p0, t);
 }
 function audioOf(g){ return g >= 0 ? ui.audios[g] || null : null; }
@@ -2561,7 +2598,10 @@ function tick(){
   // カウントイン中：画面は止めたまま、クリックだけ
   if (ui.ciUntil){
     if (now < ui.ciUntil){ ui.ciNo = Math.min(ui.ciN, Math.max(1, Math.floor((now - ui.ciStart) / ui.ciBeat) + 1)); render(); requestAnimationFrame(tick); return; }
-    ui.ciUntil = 0; ui.ciNo = 0; seekClock(ui.t);
+    ui.ciUntil = 0; ui.ciNo = 0;
+    // 音源を前の小節から鳴らしていたら、止めずに時計だけ合わせる
+    if (ui.ciAud && audioOf(ui.playSong) && !audioOf(ui.playSong).el.paused){ ui.ciAud = false; ui.playT0 = ui.t; ui.p0 = secAt(ui.t); ui.w0 = now; ui.nextClick = firstClick(ui.t); ui.vLast = Math.floor(ui.t + 1e-6); }
+    else { ui.ciAud = false; seekClock(ui.t); }
   }
   // 区間ループの切れ目：少し止まってから最初へ
   if (ui.loopWait){
@@ -2585,10 +2625,11 @@ function tick(){
     if (actx && ui.metro){
       const T = tl();
       while (ui.nextClick <= r1 + 1e-6 && secAt(ui.nextClick) < s + 0.1 * (ui.speed || 1)){
-        const at = (secAt(ui.nextClick) - s) / (ui.speed || 1); if (at > -0.03) click(isAccent(T, ui.nextClick), actx.currentTime + Math.max(0, at));
-        ui.nextClick++;
+        const n = ui.nextClick, at = (secAt(n) - s) / (ui.speed || 1), half = Math.abs(n - Math.round(n)) > 0.25;
+        if (at > -0.03) click(half ? 'sub' : isAccent(T, n), actx.currentTime + Math.max(0, at));
+        ui.nextClick = nextClickAfter(n);
       }
-    } else ui.nextClick = Math.floor(countAtSec(s) + 1e-6) + 1;
+    } else ui.nextClick = firstClick(countAtSec(s));
     if (ui.voice) voiceTick(s);
   }
   setCurFromT();
@@ -3384,6 +3425,7 @@ function conteHTML(){
 }
 function renderSide(){
   const aL = ui.tab === 'aud' && pane.dataset.audCur === String(ui.cur) && pane.querySelector('.audlist'), keep = aL ? aL.scrollTop : null;
+  if (ui.tab === 'conf' || ui.tab === 'aud') setTimeout(audStoreHTMLFill, 0);
   if (ui.tab === 'sets') pane.innerHTML = setsHTML();
   else if (ui.tab === 'perf') pane.innerHTML = perfHTML();
   else if (ui.tab === 'dot') pane.innerHTML = dotHTML();
@@ -3426,7 +3468,8 @@ function faceHTML(){
   <div class="row"><span class="note">対象</span><div class="modes"><button data-act="dirTgt" data-v="sel" class="${!all ? 'on' : ''}" ${sel.length ? '' : 'disabled'}>選んだ${sel.length}人</button><button data-act="dirTgt" data-v="all" class="${all ? 'on' : ''}">全員（${S.performers.length}人）</button></div></div>
   <div class="row"><span class="note">範囲</span><div class="modes">${Object.entries(RANGE_NAMES).map(([k, n]) => `<button data-act="dirRange" data-v="${k}" class="${rg === k ? 'on' : ''}">${n}</button>`).join('')}</div></div>
   <p class="note" style="margin-top:4px"><b>移動中の体の向き</b>（${rg === 'set' ? `${esc(s.name)}へ移動する間` : '範囲の各セットへ移動する間'}）</p>
-  <div class="row">${MV_MODES.map(([k, n]) => `<button data-act="mvMode" data-v="${k}" class="${mv === k ? 'on' : ''}" ${ui.cur === 0 && rg === 'set' ? 'disabled' : ''}>${n}</button>`).join('')}</div>
+  <div class="row">${MV_MODES.map(([k, n]) => `<button data-act="mvMode" data-v="${k}" class="${mv === k ? 'on' : ''}" ${ui.cur === 0 && rg === 'set' ? 'disabled' : ''} ${k === 'a' ? 'title="移動中は客席に向けたまま（スライド）"' : ''}>${n}</button>`).join('')}</div>
+  ${bellHTML()}
   <p class="note" style="margin-top:4px"><b>その場で方向転換</b></p>
   <div class="row"><span class="note">タイミング</span><div class="modes"><button data-act="faceWhen" data-v="arrive" class="${ui.faceWhen !== 'count' ? 'on' : ''}">着いたとき</button><button data-act="faceWhen" data-v="count" class="${ui.faceWhen === 'count' ? 'on' : ''}" ${segLen(ui.cur) < 1 ? 'disabled' : ''}>拍（カウント）を指定</button></div></div>
   ${ui.faceWhen === 'count' ? `<div class="row"><input type="number" id="faceKin" min="1" max="${Math.max(1, segLen(ui.cur))}" step="1" value="${faceK(ui.cur)}" aria-label="向きを変えるカウント"><span class="note">カウント目（${esc(s.name)}：${ui.cur ? `移動${+s.counts || 0}` : ''}${ui.cur && (+s.hold || 0) ? '＋' : ''}${(+s.hold || 0) ? `静止${+s.hold}` : ''}${!ui.cur && !(+s.hold || 0) ? 'カウントなし' : ''}／${fmtNum(Math.floor(faceK(ui.cur) / meterOf(ui.cur)) + 1, 0)}小節目付近）</span><button data-act="faceKstep" data-d="-1" title="1カウント前">−</button><button data-act="faceKstep" data-d="1" title="1カウント後">＋</button></div>` : ''}
@@ -3662,9 +3705,9 @@ function setsHTML(){
   <label>静止<input type="number" id="setHoldBars" min="0" step="0.25" value="${fmtNum(LL.H / LL.m, 2)}" style="width:4.2em" aria-label="静止の小節数">小節</label>
   <span class="note mono">＝ 移動${LL.C}＋静止${LL.H}　計${LL.all}カウント・${fmtNum(LL.bars, 2)}小節（${LL.m}拍子）</span></div>
   <p class="note">小節は、このセットに着く小節の番号です。空欄なら拍子とカウントから自動で数えます（今は m.${autoBar(ui.cur)}）。弱起などで楽譜の番号とずれるときは、曲の「最初の小節」を変えるか、ここに直接入れてください。</p>
-  <label class="notebox"><span class="note">メモ（全員のドットシート・印刷したコンテに出ます）</span><textarea id="setNote" rows="2" maxlength="${NOTE_MAX}" placeholder="例：ここで楽器を構える／Tp はベルアップ">${esc(cs.note || '')}</textarea></label></div>`;
+  ${noteBoxHTML()}</div>`;
   h += `<div class="issues"><h3>${esc(cs.name)} のチェック</h3>`;
-  h += collHTML();
+  h += collHTML() + spreadHTML(ui.cur);
   if (ui.cur > 0){
     const st = S.sets[ui.cur], nFree = st.freeIds ? Object.keys(st.freeIds).length : 0;
     if (S.freeStride) h += `<div class="issue"><span class="chip neutral">歩幅自由</span><span class="note">「設定」で全体を歩幅自由にしています。歩幅のチェックと自動調整はしません。</span></div>`;
@@ -3751,7 +3794,7 @@ function dotHTML(){
   });
   h += `</tbody></table></div>
   <p class="note">移動の「16+4」は、16カウントで移動して4カウント静止。</p>`;
-  if (ed) h += `<label class="notebox"><span class="note">${esc(p.label)}の「${esc(cs.name)}」のメモ（この人のドットシートにだけ出ます）</span><textarea id="pnNote" rows="2" maxlength="${PNOTE_MAX}" placeholder="例：ここでベルアップ／Tb2 の後ろを通る">${esc(pn)}</textarea></label>
+  if (ed) h += `${pnBoxHTML(p)}
   <label class="notebox"><span class="note">${esc(p.label)}のメモ（全体）</span><textarea id="pNote" rows="1" maxlength="${PNOTE_MAX}" placeholder="例：楽器はスーザフォン／左ききなど">${esc(p.note || '')}</textarea></label>`;
   else if (pn) h += `<p class="setnote">${esc(p.label)}・${esc(cs.name)}：${esc(pn)}</p>`;
   h += `<label class="row"><input type="checkbox" id="meChk" ${isMe ? 'checked' : ''}>この端末では${esc(p.label)}を「自分」にする（フィールドで黄色い二重の輪が付きます）</label>
@@ -3798,17 +3841,16 @@ function confHTML(){
     <span>増やし方</span><label class="row"><input type="checkbox" id="cfByBar" ${S.auto.byBar ? 'checked' : ''}>1小節（その曲の拍子）単位で増やす</label>
   </div>
   <p class="note">上限より大股になる人が出たら、まずそのセットの移動カウントを増やします。増やせる分を使っても間に合わない人は、行き先を上限の歩幅で届く位置まで縮めます。次のセットへの移動は、カウントを増やすだけで位置は変えません。</p>
-  <h2>大会のルール</h2>
-  <div class="field-set"><label for="cfLimit">演技の時間</label><div class="row"><input id="cfLimit" type="text" inputmode="numeric" value="${S.rules.limit ? fmtMS(S.rules.limit) : ''}" placeholder="例 6:00" style="width:5em"><span class="note">以内（空欄なら調べない）</span></div>
-    <span>フロアの外</span><label class="row"><input type="checkbox" id="cfInside" ${S.rules.inside ? 'checked' : ''}>フロアの外に出る人がいないか調べる（ドラムメジャーは除く）</label></div>
-  <p class="note">今の通しの長さは ${fmtTime(secAt(total()))}${S.rules.limit ? `（制限 ${fmtMS(S.rules.limit)}：${secAt(total()) > S.rules.limit ? `<b>${fmtNum(secAt(total()) - S.rules.limit, 1)}秒オーバー</b>` : `あと${fmtNum(S.rules.limit - secAt(total()), 1)}秒`}）` : ''}。最初のセットから最後のセットまでの長さで、入場・退場は入りません。外に出る人は、フィールドで赤い点線の輪になります。</p>`;
+  ${rulesConfHTML()}`;
   return h + playConfHTML() + aboutHTML();
 }
 function audioRowHTML(k){
-  const g = S.songs[k], m = beatMap(k), busy = ui.beatBusy && ui.beatBusy[k], st = songTime(k), an = st ? st.anchors.length : 0;
+  const g = S.songs[k], m = beatMap(k), busy = ui.beatBusy && ui.beatBusy[k], st = songTime(k), an = st ? st.anchors.length : 0, A = ui.audios[k], ed = ui.mode === 'edit';
+  const state = !A ? '<span class="note">未読み込み（クリック音だけ）</span>' : `<span class="note">${esc(A.name)}${A.el && Number.isFinite(A.el.duration) && A.el.duration > 0 ? `（${fmtTime(A.el.duration)}）` : ''}</span>${A.err ? '<span class="chip bad">読めません</span>' : A.remote ? '<span class="chip neutral">URLから</span>' : A.stored ? '<span class="chip ok">この端末に保存</span>' : ''}<button data-act="clearAudio" data-k="${k}">外す</button>`;
   return `<div class="audiorow"><div class="row"><b>${esc(g.name)}</b><span class="note">${m ? beatRangeText(k) + '（音源）' : '♩=' + g.bpm}${an ? `・合わせたセット ${an}` : ''}</span></div>
-    <div class="row"><label class="btn">音声ファイルを選ぶ<input type="file" data-audio="${k}" accept="audio/*" hidden></label>
-    ${ui.audios[k] ? `<span class="note">${esc(ui.audios[k].name)}</span><button data-act="clearAudio" data-k="${k}">外す</button>` : '<span class="note">未読み込み（クリック音だけ）</span>'}</div>
+    <div class="row"><label class="btn">音声ファイルを選ぶ<input type="file" data-audio="${k}" accept="audio/*" hidden></label>${state}</div>
+    ${ed ? `<div class="row"><span class="note">音源のURL</span><input type="text" inputmode="url" data-aurl="${k}" value="${esc(g.url || '')}" placeholder="audio/曲名.mp3 か https://…" style="flex:1;min-width:10em" aria-label="${esc(g.name)}の音源のURL"></div>`
+      : g.url ? `<p class="note">音源のURL：${esc(g.url)}</p>` : ''}
     ${busy ? '<p class="note">音源のテンポを調べています…</p>' : ''}
     ${g.beats ? `<label class="row"><input type="checkbox" data-sync="${k}" ${g.sync !== false ? 'checked' : ''}>音源のテンポに合わせる<span class="note">（${g.beats.length}拍）</span></label>` : ''}
     ${ui.audios[k] && !busy ? `<div class="row"><button data-act="beatRedo" data-k="${k}">${g.beats ? 'テンポをもう一度調べる' : '音源のテンポを調べる'}</button></div>` : ''}
@@ -3823,7 +3865,9 @@ function playConfHTML(){
   <div class="row"><input type="number" id="cfAvOff" step="10" min="-1000" max="1000" value="${ui.avOff}" aria-label="音ズレ補正"><span class="note">ミリ秒</span></div>
   <p class="note">再生で音が画面より遅れて聞こえるときはプラス、早いときはマイナスにします。Bluetoothイヤホンやスピーカーは 150〜250 くらいが目安です。この端末だけの設定で、保存する映像には影響しません。</p>
   <h2>音源に合わせる（曲ごと）</h2>
-  <p class="note">曲ごとに演奏の音声ファイルを読み込めます。読み込むと音源の拍を調べて、カウントを音源のテンポに合わせます（途中でテンポが変わる曲も、拍ごとに合わせます）。通し再生では、曲が変わると次の曲の音源に切り替わります。音声ファイルはこのブラウザの中だけで使われ、保存はされません（調べた拍の位置はショーに保存されます）。</p>
+  <p class="note">曲ごとに演奏の音声ファイルを読み込めます。読み込むと音源の拍を調べて、カウントを音源のテンポに合わせます（途中でテンポが変わる曲も、拍ごとに合わせます）。通し再生では、曲が変わると次の曲の音源に切り替わります。読み込んだ音声ファイルはこの端末（ブラウザ）に覚えておき、次に開いたときも自動で付きます（どこにも送られません）。</p>
+  <p class="note">共有リンクやQRコードには音源は入りません。「音源のURL」に置き場所を書いておくと、リンクやQRで開いた人もそこから聞けます。GitHub のこのサイトと同じ場所（例：audio/曲名.mp3）に置くのがいちばん確実です。Google ドライブ・Dropbox の共有リンク（リンクを知っている全員が見られる設定）も使えます。置いた音源は、場所を知っている人ならだれでも聞けるので、公開してよい音源か確かめてください。</p>
+  ${clickOptHTML()}${volHTML()}<div id="audStore"></div>
   <p class="note">波形を見ながらセットごとに合わせるときは「音源」タブを使います。</p>
   ${S.songs.map((g, k) => audioRowHTML(k)).join('')}
   <h2>ショートカット</h2>
@@ -3860,7 +3904,7 @@ function retime(){
 function audHTML(){
   const g = curSong(), song = S.songs[g], A = ui.audios[g], i = ui.cur, st = songTime(g), ed = ui.mode === 'edit';
   pane.dataset.audCur = String(i);
-  const playRow = `<div class="row"><button data-act="audPlay" data-pre="0" class="primary">▶ このセットから再生</button><button data-act="audPlay" data-pre="1" title="Shift+Space">▶ 1小節前から</button></div>`;
+  const playRow = `<div class="row"><button data-act="audPlay" data-pre="0" class="primary">▶ このセットから再生</button><button data-act="audPlay" data-pre="1" title="Shift+Space">▶ 1小節前から</button></div>${volHTML()}`;
   let h = `<h2>音源とセット（${esc(song.name)}）</h2>`;
   if (!A) h += playRow + `<p class="note">この曲の音源（音声ファイル）を下で読み込むと、波形を見ながら「このセットは音源の何秒から」を合わせたり、セットの途中から音源と一緒に再生したりできます。</p>`;
   else {
@@ -3894,18 +3938,22 @@ function drawAud(){
   }
   const P = A.peaks; if (!P) audioPeaks(g);
   const T = tl(), idx = songSets(g), cur = ui.cur, cs = getComputedStyle(document.documentElement), mut = cs.getPropertyValue('--muted').trim() || '#888', ink = cs.getPropertyValue('--ink').trim() || '#222';
-  const V = audView(g, st), dur = Math.max(P ? P.dur : 0, st.A[st.A.length - 1] + 1, 1), meter = S.songs[g].meter || 4;
+  const elDur = Number.isFinite(A.el.duration) && A.el.duration > 0 ? A.el.duration : 0;
+  const V = audView(g, st), dur = Math.max(P && P.dur ? P.dur : elDur, st.A[st.A.length - 1] + 1, 1), meter = S.songs[g].meter || 4;
+  // t0〜t1 を画面の幅に合わせて描く（0秒より前は描かない）
   const wave = (c, w, h, t0, t1, top, bot) => { if (!P || !P.pk.length) return; c.fillStyle = 'rgba(128,140,160,.55)'; const mid = (top + bot) / 2, amp = (bot - top) / 2;
-    for (let x = 0; x < w; x++){ const a = Math.max(0, Math.floor((t0 + (t1 - t0) * x / w) * P.rate)), b = Math.min(P.pk.length, Math.max(a + 1, Math.ceil((t0 + (t1 - t0) * (x + 1) / w) * P.rate))); let m = 0; for (let k = a; k < b; k++) if (P.pk[k] > m) m = P.pk[k]; if (m > 0) c.fillRect(x, mid - m * amp, 1, Math.max(1, m * amp * 2)); } };
+    for (let x = 0; x < w; x++){ const ta = t0 + (t1 - t0) * x / w, tb = t0 + (t1 - t0) * (x + 1) / w; if (tb <= 0) continue; const a = Math.max(0, Math.floor(ta * P.rate)), b = Math.min(P.pk.length, Math.max(a + 1, Math.ceil(tb * P.rate))); let m = 0; for (let k = a; k < b; k++) if (P.pk[k] > m) m = P.pk[k]; if (m > 0) c.fillRect(x, mid - m * amp, 1, Math.max(1, m * amp * 2)); } };
   // 全体（シークバー）
   { const [c, w, h] = audPrep(ov), X = t => t / dur * w; c.clearRect(0, 0, w, h); wave(c, w, h, 0, dur, 3, h - 3);
+    if (!P){ c.fillStyle = 'rgba(128,140,160,.18)'; c.fillRect(0, h / 2 - 1, w, 2); }
     c.fillStyle = 'rgba(226,178,67,.25)'; c.fillRect(X(V.t0), 0, Math.max(2, X(V.win)), h);
     idx.forEach(i => { const x = X(audHead(i)); c.fillStyle = i === cur ? '#F08A00' : S.sets[i].at != null ? '#1F9D63' : 'rgba(120,128,140,.75)'; c.fillRect(x - (i === cur ? 1 : 0.5), 0, i === cur ? 2 : 1, h); });
     c.fillStyle = '#E5393A'; c.fillRect(X(V.play) - 1, 0, 2, h); ov._dur = dur; }
   // 拡大
   { const [c, w, h] = audPrep(za), X = t => (t - V.t0) / V.win * w, top = 16, bot = h - 22; c.clearRect(0, 0, w, h);
     if (V.t0 < 0){ c.fillStyle = 'rgba(128,128,128,.14)'; c.fillRect(0, 0, X(0), h); }
-    wave(c, w, h, Math.max(0, V.t0), V.t1, top, bot);
+    wave(c, w, h, V.t0, V.t1, top, bot);
+    if (!P || !P.pk.length){ c.font = `500 12px ${cssSans}`; c.fillStyle = mut; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(!P ? '波形を作っています…' : A.remote ? 'この置き場所の音源は波形を出せません（再生はできます）' : '波形を作れませんでした（再生はできます）', w / 2, (top + bot) / 2); }
     // 時刻の目盛り
     c.font = `500 10px ${cssMono}`; c.textBaseline = 'bottom'; c.textAlign = 'left'; c.fillStyle = mut;
     const step = V.win > 30 ? 5 : V.win > 12 ? 2 : 1; for (let s = Math.ceil(V.t0 / step) * step; s <= V.t1; s += step){ const x = X(s); c.fillRect(x, h - 4, 1, 4); c.fillText(fmtSec(s).replace(/\.00$/, ''), x + 2, h - 1); }
@@ -3933,7 +3981,7 @@ async function audioPeaks(g){
     for (let ch = 0; ch < buf.numberOfChannels; ch++){ const d = buf.getChannelData(ch), per = sr / rate; for (let k = 0; k < n; k++){ const a = Math.floor(k * per), b = Math.min(d.length, Math.floor((k + 1) * per)); let m = pk[k]; for (let j = a; j < b; j++){ const v = d[j] < 0 ? -d[j] : d[j]; if (v > m) m = v; } pk[k] = m; } }
     let mx = 0; for (let k = 0; k < n; k++) if (pk[k] > mx) mx = pk[k]; if (mx > 0) for (let k = 0; k < n; k++) pk[k] = Math.sqrt(pk[k] / mx);
     A.peaks = { pk, rate, dur:buf.duration };
-  } catch (e) { A.peaks = { pk:new Float32Array(0), rate:100, dur:A.el.duration || 0 }; }
+  } catch (e) { A.peaks = { pk:new Float32Array(0), rate:100, dur:Number.isFinite(A.el.duration) ? A.el.duration : 0 }; }
   A.peaksBusy = false; if (ui.audios[g] === A) drawAud();
 }
 function seekAud(g, t){
@@ -4078,8 +4126,7 @@ pane.addEventListener('change', e => {
     if (sg){ let v = clamp(+t.value || 0, -30, 36000); if (beatMap(k)) v = sg.beats[nearestBeat(sg.beats, v)]; sg.off = v; ui.ver++; save(); if (ui.playing) seekClock(ui.t); renderTop(); renderSongbar(); renderTimeline(); render(); } return; }
   if (t.dataset.sync != null){ const k = +t.dataset.sync, sg = S.songs[k]; if (sg && sg.beats){ pushHist(); sg.sync = t.checked; changed(true); if (ui.playing) seekClock(ui.t); } return; }
   if (t.dataset.audio != null && t.files && t.files[0]){
-    const k = +t.dataset.audio, f = t.files[0], old = ui.audios[k]; if (old){ pauseAudio(old); URL.revokeObjectURL(old.el.src); }
-    ui.audios[k] = { el:new Audio(URL.createObjectURL(f)), name:f.name, file:f }; renderSide(); analyzeSongAudio(k); return;
+    const k = +t.dataset.audio, f = t.files[0]; t.value = ''; audSetFile(k, f); return;
   }
   if (row){
     const i = +row.dataset.set, s = S.sets[i], f = t.dataset.f; pushHist();
@@ -4128,7 +4175,7 @@ function libMeta(){ return { n:S.performers.length, sets:S.sets.length, songs:S.
 // 中身が保存したときと同じか（名前の変更も含めて）を見るための印
 const libSig = () => fnv(JSON.stringify(packShow(S, true)));
 async function libSave(asNew){
-  if (asNew && ui.libId){ S.title = (S.title || '無題') + '（コピー）'; S.id = newShowId(); save(); renderTop(); }  // 別のショーとして保存：名前で見分けられるように（別のショーなので印も新しく）
+  if (asNew && ui.libId){ S.title = (S.title || '無題') + '（コピー）'; S.id = newShowId(); save(); renderTop(); audRekey(); }  // 別のショーとして保存：名前で見分けられるように（別のショーなので印も新しく）
   const a = libLoad(), code = await makeCode(S), now = Date.now();
   let e = !asNew && ui.libId ? a.find(x => x.id === ui.libId) : null;
   const extra = { sid:S.id, up:S.updated || 0, part:S.part || '' };
@@ -4422,7 +4469,7 @@ document.addEventListener('click', e => {
   else if (a === 'audClear'){ if (S.sets[ui.cur].at != null){ pushHist(); delete S.sets[ui.cur].at; ui.audCtr = null; changed(true); retime(); } }
   else if (a === 'audClearAll'){ const g = curSong(); pushHist(); songSets(g).forEach(j => { delete S.sets[j].at; }); ui.audCtr = null; changed(true); retime(); toast('この曲の合わせを全部外しました'); }
   else if (a === 'beatShift'){ const k = +b.dataset.k, sg = S.songs[k], m = beatMap(k); if (m){ pushHist(); sg.off = sg.beats[clamp(m.k0 + (+b.dataset.d), 0, sg.beats.length - 1)]; changed(true); if (ui.playing) seekClock(ui.t); } }
-  else if (a === 'clearAudio'){ const k = +b.dataset.k, A = ui.audios[k]; if (A){ pauseAudio(A); URL.revokeObjectURL(A.el.src); } ui.audios[k] = null; renderSide(); }
+  else if (a === 'clearAudio'){ audClear(+b.dataset.k); }
   else if (a === 'closeModal'){ $('#fileModal').hidden = true; }
   else if (a === 'saveFile'){ makeCode(S).then(code => saveOut(`${safeName(S.title)}.txt`, code, 'ファイルを保存しました。「ファイルを開く」で読み込めます')); }
   else if (a === 'savePng'){ savePng(); }
@@ -4674,7 +4721,7 @@ function beatRangeText(g){
 }
 async function songBuffer(g){
   const A = ui.audios[g]; if (!A) return null; if (A.buf) return A.buf;
-  const ab = A.file ? await A.file.arrayBuffer() : await (await fetch(A.el.src)).arrayBuffer();
+  const ab = A.file ? await A.file.arrayBuffer() : await (await fetch(A.url || A.el.src)).arrayBuffer();
   const oc = new OfflineAudioContext(2, 1, 48000);
   A.buf = await new Promise((res, rej) => { const p = oc.decodeAudioData(ab, res, rej); if (p && p.catch) p.catch(rej); });
   return A.buf;
@@ -4975,7 +5022,7 @@ $('#bSync').onclick = () => { renderSyncBody(); $('#syncModal').hidden = false; 
 $('#bLib').onclick = () => { renderLib(); $('#libModal').hidden = false; };
 $('#libModal').addEventListener('click', e => { if (e.target.id === 'libModal') $('#libModal').hidden = true; });
 $('#bFile').onclick = async () => {
-  $('#fileModal').hidden = false; $('#jsonBox').value = '作成中…'; $('#sizeInfo').textContent = ''; renderRecNote();
+  $('#fileModal').hidden = false; renderFileExtras(); $('#jsonBox').value = '作成中…'; $('#sizeInfo').textContent = ''; renderRecNote();
   try {
     const code = await makeCode(S), raw = JSON.stringify(S).length;
     $('#jsonBox').value = code;
@@ -4991,7 +5038,9 @@ $('#syncModal').addEventListener('change', e => {
 });
 $('#fileIn').addEventListener('change', e => {
   const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
-  rd.onload = () => { $('#jsonBox').value = rd.result;
+  rd.onload = () => {
+    if (/^\s*\{\s*"drillboard"\s*:\s*"pack"/.test(String(rd.result).slice(0, 80))){ $('#jsonBox').value = '（音源込みのファイル）'; openPack(String(rd.result)).then(ok => { if (ok) $('#fileModal').hidden = true; else toast('このファイルは読み込めませんでした'); }); return; }
+    $('#jsonBox').value = rd.result;
     readCode(String(rd.result)).then(sh => { pushHist(); S = sh; ui.cur = 0; ui.t = 0; ui.sel.clear(); ui.clip = null; afterLoad(true); $('#fileModal').hidden = true; toast(`「${S.title}」を開きました`); })
       .catch(() => toast('このファイルは読み込めませんでした')); };
   rd.readAsText(f); e.target.value = '';
@@ -5040,8 +5089,24 @@ document.addEventListener('keydown', e => {
 
 /* ====================================================================== */
 /* ---------- 版・更新内容 ---------- */
-const APP_VERSION = '9', APP_DATE = '2026-10-02';
+const APP_VERSION = '10', APP_DATE = '2026-10-02';
 const CHANGELOG = [
+  { v:'10', d:'2026-10-02', items:[
+    '音源をこの端末に覚えておくので、毎回選び直さなくてよくなりました',
+    '音源込みのファイルで渡せます。曲ごとに音源のURLを書いておくと、共有リンクやQRコードで開いた人もそこから聞けます',
+    '音源タブ：曲の頭の数秒で波形がずれていたのを直しました。波形を作っている間の表示と、音源・クリックの音量',
+    'カウントインのとき、音源の前の小節も鳴らします',
+    'クリック：小節の頭（1拍目）だけ高い音・裏拍のクリックを選べます',
+    'ベルフロント（移動中も客席に向けたまま）をまとめて設定できます',
+    'メモを書くセットを選べるようにし、メモのあるセットの一覧を付けました',
+    '接触の直し方：着いた位置が近すぎるときは、半歩・1歩ずらす案を出します',
+    '歩幅のばらつき（同じセットで大股と小股が混ざる）のチェックと、そろえる道具',
+    'パートリーダー用：パート全員を1枚にまとめたドットシート',
+    '全員の自分用リンクを、名前つきの一覧でコピー（LINE で配る用）',
+    'コンテの印刷の各ページに、そのセットを開くQRコード',
+    'サイトに置いて配る：ショーのファイルを GitHub に置くと、いつも最新の版が開く短いリンク・QRコードになります',
+    '大会のルール：全日本吹奏楽連盟（全日本マーチングコンテスト）と日本マーチングバンド協会の大会を選ぶと、時間・入退場・人数・ドラムメジャー・演技エリア・ピット・規定課題を調べます（項目ごとにオン・オフ）',
+  ] },
   { v:'9', d:'2026-10-02', items:[
     '印刷・PDF：紙のコンテと同じ形（1セット1ページ・右側にセット番号・カウント・練習番号・メモ）',
     '隊員ごとのドットシートを印刷（1人1ページ・位置の言い方を選べる・スマホで開けるQRコード付き）',
@@ -5223,7 +5288,8 @@ function diffHTML(sh, df){
   if (!out.length) out.push('セットの位置・カウントは同じです（名前や設定だけの違い）');
   return `<ul class="difflist">${out.map(x => `<li>${x}</li>`).join('')}</ul>`;
 }
-async function openShared(sh, me){
+async function openShared(sh, me, opts){
+  opts = opts || {};
   const stamp = t => t ? fmtStamp(t) : '日時の記録なし';
   const lib = libLoad();
   let local = null;
@@ -5248,8 +5314,9 @@ async function openShared(sh, me){
     const lu = local.up, su = sh.updated || 0;
     if (lu === su){
       if (local.where === 'lib') await libOpen(local.e.id, true);
+      if (sh.src && !S.src){ S.src = sh.src; save(); }
       if (me && focusMe(me, true)) toast(`同じ版（${stamp(su)}）を開いています。${me}のドットシートを出しました`);
-      else toast(`「${sh.title}」の同じ版（${stamp(su)}）をすでに持っています${local.where === 'lib' ? '。ショー一覧から開きました' : ''}`);
+      else if (!opts.quietSame) toast(`「${sh.title}」の同じ版（${stamp(su)}）をすでに持っています${local.where === 'lib' ? '。ショー一覧から開きました' : ''}`);
       return;
     }
     let localSh = S; if (local.where === 'lib'){ try { localSh = await readCode(local.e.code); } catch (e) { localSh = null; } }
@@ -5292,7 +5359,9 @@ async function openFromHash(){
   try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
   if (!m){ focusMe(me); return; }
   let sh; try { sh = await readCode(decodeURIComponent(m[1])); } catch (e) { return toast('リンクのショーを開けませんでした。リンクが途中で切れていないか確かめてください'); }
-  return openShared(sh, me);
+  const sm = /[#&]set=(\d+)/.exec(h);
+  await openShared(sh, me);
+  if (sm && S.id === sh.id && S.sets[+sm[1]]) goSet(+sm[1]);
 }
 // その人だけのショー（自分用リンク・QRコード用。全員分だと長すぎるとき）
 function subsetShow(id){
@@ -5311,6 +5380,7 @@ function subsetShow(id){
 const QR_MAX = 1700;   // QRコードにする長さの上限（これより長いと読み取りにくい）
 async function personalURL(p){
   const base = location.origin + location.pathname, me = '&me=' + encodeURIComponent(p.label);
+  if (S.src){ const u = showLink(me); return { full:u, part:u, qr:u, qrKind:'src' }; }
   const full = base + '#d=' + await makeCode(S) + me;
   const sub = subsetShow(p.id), part = sub ? base + '#d=' + await makeCode(sub) + me : full;
   return { full, part, qr:full.length <= QR_MAX ? full : part.length <= 2900 ? part : base + '?me=' + encodeURIComponent(p.label), qrKind:full.length <= QR_MAX ? 'full' : part.length <= 2900 ? 'part' : 'name' };
@@ -5326,8 +5396,10 @@ function pracLoad(){
   let o = {}; try { o = JSON.parse(localStorage.getItem(PRACKEY) || '{}') || {}; } catch (e) {}
   ui.speed = SPEEDS.includes(+o.speed) ? +o.speed : 1; ui.countIn = !!o.countIn; ui.voice = !!o.voice; ui.flip = !!o.flip; ui.gap = !!o.gap;
   ui.posFmt = ['pt', 'ctr', 'edge'].includes(o.posFmt) ? o.posFmt : 'pt';
+  ui.musicVol = Number.isFinite(+o.musicVol) ? clamp(+o.musicVol, 0, 1) : 1; ui.clickVol = Number.isFinite(+o.clickVol) ? clamp(+o.clickVol, 0, 1.5) : 1;
+  ui.clickAccent = !!o.clickAccent; ui.clickSub = !!o.clickSub; ui.ciMusic = o.ciMusic !== false;
 }
-function pracSave(){ try { localStorage.setItem(PRACKEY, JSON.stringify({ speed:ui.speed, countIn:ui.countIn, voice:ui.voice, flip:ui.flip, gap:ui.gap, posFmt:ui.posFmt })); } catch (e) {} }
+function pracSave(){ try { localStorage.setItem(PRACKEY, JSON.stringify({ speed:ui.speed, countIn:ui.countIn, voice:ui.voice, flip:ui.flip, gap:ui.gap, posFmt:ui.posFmt, musicVol:ui.musicVol, clickVol:ui.clickVol, clickAccent:ui.clickAccent, clickSub:ui.clickSub, ciMusic:ui.ciMusic })); } catch (e) {} }
 pracLoad();
 function setRate(A){ if (!A || !A.el) return; try { A.el.playbackRate = ui.speed || 1; A.el.preservesPitch = true; A.el.webkitPreservesPitch = true; A.el.mozPreservesPitch = true; } catch (e) {} }
 function setSpeed(v){
@@ -5361,6 +5433,8 @@ function beginCountIn(){
   let beat = secAt(Math.min(total(), t0 + 1)) - secAt(t0); if (!(beat > 0.08)) beat = 60 / bpmOf(i);
   beat /= (ui.speed || 1);
   pauseAudio(audioOf(ui.playSong)); ui.playSong = -1;
+  // 音源があれば、前の小節から鳴らし始める（終わったら止めずにそのまま続ける）
+  ui.ciAud = ciMusicStart(t0, m);
   const w0 = performance.now() + 80;
   ui.ciStart = w0; ui.ciBeat = beat * 1000; ui.ciN = m; ui.ciUntil = w0 + m * beat * 1000; ui.ciNo = 0;
   ciOsc = [];
@@ -5368,7 +5442,7 @@ function beginCountIn(){
   if (ui.voice) for (let k = 0; k < m; k++) setTimeout(() => { if (ui.playing && ui.ciUntil) voiceSay(String(k + 1)); }, Math.max(0, 80 + k * beat * 1000 - 100));
   return true;
 }
-function stopCountIn(){ ui.ciUntil = 0; ui.ciNo = 0; ui.loopWait = 0; ciOsc.forEach(o => { try { o.stop(); } catch (e) {} }); ciOsc = []; }
+function stopCountIn(){ ui.ciUntil = 0; ui.ciNo = 0; ui.loopWait = 0; ui.ciAud = false; ciOsc.forEach(o => { try { o.stop(); } catch (e) {} }); ciOsc = []; }
 // 1カウントずつ進む・戻る
 function stepCount(d){
   stop(); const [r0, r1] = viewRange();
@@ -5447,6 +5521,10 @@ function pracHTML(){
   <div class="row"><select id="loopB" aria-label="おわりのセット">${opts(L.b)}</select><span class="note">に着くまで</span></div>
   <div class="row"><button data-act="loopOn" class="primary">${ui.loopAB ? 'この区間に変える' : 'この区間をくり返す'}</button>${ui.loopAB ? '<button data-act="loopOff">ループをやめる</button>' : ''}<button data-act="loopHere">今のセットから次のセットまで</button></div>
   <label class="row"><input type="checkbox" id="pracCountIn" ${ui.countIn ? 'checked' : ''}>再生の前に1小節カウントする（くり返すたびにも）</label>
+  <label class="row"><input type="checkbox" id="pracCiMusic" ${ui.ciMusic !== false ? 'checked' : ''}>カウントインのあいだ、音源の前の小節も鳴らす（音源があるとき）</label>
+  <h3 class="shh">クリック音・音量</h3>
+  ${clickOptHTML()}
+  ${volHTML()}
   <h3 class="shh">1カウントずつ</h3>
   <div class="row"><button data-act="stepB">← 1カウント戻る</button><button data-act="stepF">1カウント進む →</button><span class="note">キーボードでは , と . （人を選んでいないときは ← → も）</span></div>
   <h3 class="shh">声でカウント（試験的）</h3>
@@ -5499,11 +5577,11 @@ const tick0 = () => new Promise(r => setTimeout(r, 0));
 function renderPrint(cvs, t, o){
   o = o || {};
   const sv = { W, H, dpr, ctx, view:{ ...view }, t:ui.t, cur:ui.cur, sel:ui.sel, mode:ui.mode, tab:ui.tab, band:ui.band, focus:ui.focus, fitted, drag:ui.drag,
-    paths:ui.paths, flip:ui.flip, paper:ui.paper, pf:ui.printFocus, ps:ui.pathSets, me:ui.me, gap:ui.gap, solo:ui.solo, disp:{ ...S.display } };
+    paths:ui.paths, flip:ui.flip, paper:ui.paper, pf:ui.printFocus, pfs:ui.printFocusSet, ps:ui.pathSets, me:ui.me, gap:ui.gap, solo:ui.solo, disp:{ ...S.display } };
   try {
     // k：字や線を太くする倍率（紙に印刷したときに読める大きさに）
     const k = o.k || 1; ui.offscreen = true; ctx = cvs.getContext('2d'); dpr = k; W = cvs.width / k; H = cvs.height / k;
-    ui.paper = o.paper !== false; ui.flip = !!o.flip; ui.paths = !!o.paths; ui.printFocus = o.focus || null; ui.pathSets = o.pathSets || null; ui.me = ''; ui.gap = false; ui.solo = false;
+    ui.paper = o.paper !== false; ui.flip = !!o.flip; ui.paths = !!o.paths; ui.printFocus = o.focus || null; ui.printFocusSet = o.focusSet ? new Set(o.focusSet) : null; ui.pathSets = o.pathSets || null; ui.me = ''; ui.gap = false; ui.solo = false;
     Object.assign(S.display, { labels:o.labels !== false, dist:false, dirs:!!o.dirs, nums:true, setNums:true });
     fit();
     { // 丸の大きさ：となりとの間隔に合わせて、紙でも名前が読める大きさに
@@ -5511,11 +5589,11 @@ function renderPrint(cvs, t, o){
       for (let a = 0; a < ids.length; a++) for (let b = a + 1; b < ids.length; b++){ const d = dist(P[ids[a]], P[ids[b]]); if (d > 1e-3 && d < md) md = d; }
       ui.printR = Math.max(5, clamp(Math.min(0.45, (isFinite(md) ? md : 1) * 0.47), 0.26, 0.45) * view.scale);
     }
-    ui.t = t; ui.cur = segIdxCtx(t); ui.sel = o.focus ? new Set([o.focus]) : new Set(); ui.mode = 'view'; ui.tab = o.focus && o.track ? 'dot' : 'sets'; ui.focus = o.focus || null; ui.band = null; ui.drag = null;
+    ui.t = t; ui.cur = segIdxCtx(t); ui.sel = o.focus ? new Set([o.focus]) : o.focusSet ? new Set(o.focusSet) : new Set(); ui.mode = 'view'; ui.tab = o.focus && o.track ? 'dot' : 'sets'; ui.focus = o.focus || null; ui.band = null; ui.drag = null;
     render();
   } finally {
     W = sv.W; H = sv.H; dpr = sv.dpr; ctx = sv.ctx; Object.assign(view, sv.view); fitted = sv.fitted;
-    Object.assign(ui, { t:sv.t, cur:sv.cur, sel:sv.sel, mode:sv.mode, tab:sv.tab, band:sv.band, focus:sv.focus, drag:sv.drag, paths:sv.paths, flip:sv.flip, paper:sv.paper, printFocus:sv.pf, pathSets:sv.ps, me:sv.me, gap:sv.gap, solo:sv.solo, offscreen:false, printR:0 });
+    Object.assign(ui, { t:sv.t, cur:sv.cur, sel:sv.sel, mode:sv.mode, tab:sv.tab, band:sv.band, focus:sv.focus, drag:sv.drag, paths:sv.paths, flip:sv.flip, paper:sv.paper, printFocus:sv.pf, printFocusSet:sv.pfs, pathSets:sv.ps, me:sv.me, gap:sv.gap, solo:sv.solo, offscreen:false, printR:0 });
     Object.assign(S.display, sv.disp);
   }
 }
@@ -5529,7 +5607,8 @@ function printCanvasSize(maxW){
 }
 function songTempoText(i){ return tempoText(i).replace('♩', '♩='); }
 async function buildContePrint(o){
-  o = Object.assign({ range:'all', paths:true, paper:true, flip:false }, o || {});
+  o = Object.assign({ range:'all', paths:true, paper:true, flip:false, qr:true }, o || {});
+  const useQR = o.qr && canLink() && typeof window.qrcode === 'function', fullLink = useQR && !S.src ? location.origin + location.pathname + '#d=' + await makeCode(S) : null;
   const idx = o.range === 'cur' ? [ui.cur] : o.range === 'song' ? songSets(curSong()) : S.sets.map((_, i) => i);
   const T = tl(), N = S.sets.length, [hx, hy] = fieldHalf(), wide = hx / hy > 1.3;
   const [cw, ch] = printCanvasSize(wide ? 2400 : 1500), cvs = canvasOf(cw, ch);
@@ -5549,9 +5628,11 @@ async function buildContePrint(o){
       : `<table class="cp-tbl">${cells.map(c => `<tr><th>${c[0]}${c[1] ? `<small>${c[1]}</small>` : ''}</th><td>${c[2]}${c[3] ? `<small>${c[3]}</small>` : ''}</td></tr>`).join('')}</table>`;
     const next = nx ? `<div class="cp-next">次：${nx.sg !== s.sg ? esc(S.songs[nx.sg].name) + ' ' : ''}${esc(nx.name)}（Move ${nx.counts}${nx.hold ? ` / Hold ${nx.hold}` : ''}）</div>` : '<div class="cp-next">（最後のセット）</div>';
     const note = `<div class="cp-note"><b>メモ</b>${s.note ? `<p>${esc(s.note).replace(/\n/g, '<br>')}</p>` : '<p class="cp-blank"></p>'}${pns ? `<ul>${pns}</ul>` : ''}</div>`;
+    const qrO = useQR ? conteQRurl(i, fullLink) : null, qsvg = qrO ? qrSVG(qrO.url) : '';
+    const qr = qsvg ? `<div class="cp-qr">${qsvg}<small>${esc(qrO.cap)}</small></div>` : '';
     const foot = `<div class="cp-foot">${o.flip ? '演奏者から見た向き（客席が上）' : '客席から見た向き（客席が下）'} · ${n + 1} / ${idx.length}</div>`;
     html += `<section class="pp conte ${wide ? 'wide' : ''}"><div class="cp-fig"><img src="${url}" alt="${esc(s.name)}"></div>
-      ${wide ? `<div class="cp-panel w"><div class="cp-a">${head}</div><div class="cp-b">${tbl}${next}${foot}</div>${note}</div>` : `<div class="cp-panel">${head}${tbl}${next}${note}${foot}`}
+      ${wide ? `<div class="cp-panel w"><div class="cp-a">${head}${qr}</div><div class="cp-b">${tbl}${next}${foot}</div>${note}</div>` : `<div class="cp-panel">${head}${tbl}${next}${note}${qr}${foot}`}
       ${wide ? '' : '</div>'}</section>`;
   }
   return { html, land:true, n:idx.length };
@@ -5575,7 +5656,7 @@ async function buildSheetPrint(o){
   const [cw, ch] = printCanvasSize(wide ? 1400 : 900), cvs = canvasOf(cw, ch), mini = o.mini && list.length === 1;
   const songs = S.songs.map((g, k) => [k, songSets(k)]).filter(x => x[1].length);
   const useQR = o.qr && canLink() && typeof window.qrcode === 'function';
-  let fullCode = null; if (useQR) fullCode = await makeCode(S);
+  let fullCode = null; if (useQR && !S.src) fullCode = await makeCode(S);
   let html = '';
   for (let n = 0; n < list.length; n++){
     const p = list[n];
@@ -5598,10 +5679,10 @@ async function buildSheetPrint(o){
     let qr = '';
     if (useQR){
       const base = location.origin + location.pathname, me = '&me=' + encodeURIComponent(p.label);
-      let url = base + '#d=' + fullCode + me, kind = 'full';
-      if (url.length > QR_MAX){ const sub = subsetShow(p.id); url = base + '#d=' + await makeCode(sub) + me; kind = 'part'; if (url.length > 2900){ url = base + '?me=' + encodeURIComponent(p.label); kind = 'name'; } }
+      let url = S.src ? showLink(me) : base + '#d=' + fullCode + me, kind = S.src ? 'src' : 'full';
+      if (!S.src && url.length > QR_MAX){ const sub = subsetShow(p.id); url = base + '#d=' + await makeCode(sub) + me; kind = 'part'; if (url.length > 2900){ url = base + '?me=' + encodeURIComponent(p.label); kind = 'name'; } }
       const svg = qrSVG(url);
-      if (svg) qr = `<div class="ms-qr">${svg}<small>${kind === 'name' ? '先に共有リンクでショーを開いておくと、読み取ったときにこの人のドットが出ます' : 'スマホのカメラで読むと、自分のドットシートが開きます'}${kind === 'part' ? '（自分のドットだけ）' : ''}</small></div>`;
+      if (svg) qr = `<div class="ms-qr">${svg}<small>${kind === 'name' ? '先に共有リンクでショーを開いておくと、読み取ったときにこの人のドットが出ます' : 'スマホのカメラで読むと、自分のドットシートが開きます'}${kind === 'part' ? '（自分のドットだけ）' : kind === 'src' ? '（いつも最新の版）' : ''}</small></div>`;
     }
     html += `<section class="pp sheet"><header class="ms-head"><div class="ms-left"><div class="ms-show">${esc(S.title)}${stamp ? `<small>${esc(stamp)}</small>` : ''}</div>
       <div class="ms-name">${esc(p.label)}<small>${esc(secOf(p.sec).n)}</small></div>${p.note ? `<div class="ms-pnote">${esc(p.note)}</div>` : ''}<div class="ms-fmt">${esc(posFmtNote(o.fmt))}</div></div>${qr}</header>
@@ -5616,7 +5697,7 @@ async function doPrint(kind, o){
   if (ui.printBusy) return null; ui.printBusy = true; printJob++;
   try {
     printReset(); stop();
-    const r = kind === 'conte' ? await buildContePrint(o) : await buildSheetPrint(o);
+    const r = kind === 'conte' ? await buildContePrint(o) : kind === 'part' ? await buildPartPrint(o) : await buildSheetPrint(o);
     if (!r || !r.n){ toast('印刷するものがありません'); return null; }
     $('#printArea').innerHTML = r.html;
     $('#printPageStyle').textContent = `@page{size:A4 ${r.land ? 'landscape' : 'portrait'};margin:8mm}`;
@@ -5626,7 +5707,7 @@ async function doPrint(kind, o){
     if (o && o.noPrint) return r;
     const go = () => { try { window.print(); } catch (e) { toast('印刷を開けませんでした'); } };
     // iPhone・iPad は、ボタンを押した流れの中でないと印刷の画面が開かないことがあるので、もう一度押してもらう
-    if (isWebKit()) ask('印刷の準備ができました', `<p>${r.n}${kind === 'conte' ? 'ページ' : '人分'}の準備ができました。「印刷する」を押すと印刷の画面が開きます（PDFにするときは、印刷の画面で2本指で広げてから共有）。</p>`, [['print', '印刷する', 'primary'], ['cancel', 'やめる']]).then(v => { if (v === 'print') go(); else printReset(); });
+    if (isWebKit()) ask('印刷の準備ができました', `<p>${r.n}${kind === 'sheet' ? '人分' : 'ページ'}の準備ができました。「印刷する」を押すと印刷の画面が開きます（PDFにするときは、印刷の画面で2本指で広げてから共有）。</p>`, [['print', '印刷する', 'primary'], ['cancel', 'やめる']]).then(v => { if (v === 'print') go(); else printReset(); });
     else setTimeout(go, 60);
     return r;
   } finally { ui.printBusy = false; }
@@ -5639,6 +5720,7 @@ function printModalHTML(){
   <label class="row"><input type="checkbox" id="pcPaths" checked>前のセットからの動きを点線で入れる</label>
   <label class="row"><input type="checkbox" id="pcPaper" checked>白い紙向けの色（インクが少なく、白黒でも見やすい）</label>
   <label class="row"><input type="checkbox" id="pcFlip" ${ui.flip ? 'checked' : ''}>演奏者から見た向き（客席が上）</label>
+  <label class="row link-only"><input type="checkbox" id="pcQR" checked>ページごとに、そのセットを開くQRコードを入れる${S.src ? '' : '（「サイトに置いて配る」を設定すると、いつも最新の版が開くQRになります）'}</label>
   <div class="row"><button data-act="printConte" class="primary">コンテを印刷・PDF</button></div>
   <p class="note">A4横・1セット1ページ。右側にセット名・Move（移動）と Hold（静止）のカウント・練習番号・小節・テンポ・次のセット・メモが入ります。</p>
   <h3 class="shh">隊員ごとのドットシート</h3>
@@ -5647,7 +5729,12 @@ function printModalHTML(){
   <label class="row link-only"><input type="checkbox" id="psQR" checked>自分のドットシートを開くQRコードを入れる</label>
   <label class="row"><input type="checkbox" id="psMini">セットごとの小さい図も入れる（1人のときだけ）</label>
   <div class="row"><button data-act="printSheets" class="primary">ドットシートを印刷・PDF</button></div>
-  <p class="note">A4縦・1人1ページ（セットが多いと2ページ）。曲ごとの動線の図と、セットごとの位置・カウント・動き・メモの表が入ります。</p>` : '<p class="note">隊員がいません。</p>'}
+  <p class="note">A4縦・1人1ページ（セットが多いと2ページ）。曲ごとの動線の図と、セットごとの位置・カウント・動き・メモの表が入ります。</p>
+  <h3 class="shh">パートリーダー用（パート全員を1枚に）</h3>
+  <div class="row"><label class="row"><input type="radio" name="ppWho" value="sec" checked>${esc(secOf(fp.sec).n)}（${nSec}人）</label><label class="row"><input type="radio" name="ppWho" value="all">全部のパート</label></div>
+  <label class="row"><input type="checkbox" id="ppMini">セットごとの小さい図も入れる（パートの人を目立たせる・時間がかかります）</label>
+  <div class="row"><button data-act="printPart" class="primary">パートまとめを印刷・PDF</button></div>
+  <p class="note">A4横・1パート1枚（10人以上は分けます）。たてにセット、よこにパートの人が並び、各マスに左右・前後の位置と動きが入ります。位置の書き方は上の選び方と同じです。</p>` : '<p class="note">隊員がいません。</p>'}
   <p class="note">PDFにするときは、印刷の画面で送り先を「PDFに保存」にしてください（iPhone・iPad は共有ボタンから「プリント」→ 2本指で広げると PDF になります）。</p>`;
 }
 function openPrintModal(){ $('#printBody').innerHTML = printModalHTML(); $('#printModal').hidden = false; }
@@ -5656,7 +5743,7 @@ async function showMyLink(id){
   if (!canLink()) return toast('このページの開き方では、リンクを作れません（GitHub Pages などで開いたときに使えます）');
   const r = await personalURL(p), svg = qrSVG(r.qr);
   const v = await ask(`${p.label} の自分用リンク`, `<p class="note">開くと、${esc(p.label)}のドットシートが出て、フィールドで${esc(p.label)}に印が付きます。${r.full.length > 6000 ? '全員分のデータが入ったリンクは長いので、LINE などで送るときは「全員分のリンク」を、QRコードは自分の分だけのデータで作っています。' : ''}</p>
-    ${svg ? `<div class="qrbox">${svg}</div><p class="note">${r.qrKind === 'full' ? 'QRコード：全員分のデータ入り' : r.qrKind === 'part' ? 'QRコード：この人のドットだけ（全員のデータは長すぎるため）' : 'QRコード：名前だけ（先に共有リンクでショーを開いておいてください）'}</p>` : ''}`,
+    ${svg ? `<div class="qrbox">${svg}</div><p class="note">${r.qrKind === 'src' ? 'QRコード：サイトに置いたショーを開きます（いつも最新の版）' : r.qrKind === 'full' ? 'QRコード：全員分のデータ入り' : r.qrKind === 'part' ? 'QRコード：この人のドットだけ（全員のデータは長すぎるため）' : 'QRコード：名前だけ（先に共有リンクでショーを開いておいてください）'}${S.songs.some(g => g.url) ? '。音源はURLから読み込みます' : '。音源は入りません（「音源」タブで音源のURLを書くと、開いた人も聞けます）'}</p>` : ''}`,
     [['copy', '全員分のリンクをコピー', 'primary'], ['copyPart', 'この人の分だけのリンクをコピー'], ...(navigator.share ? [['share', '送る…']] : []), ['close', '閉じる']]);
   if (v === 'copy') copyText(r.full, `${p.label}用のリンクをコピーしました`);
   else if (v === 'copyPart') copyText(r.part, `${p.label}の分だけのリンクをコピーしました`);
@@ -5762,9 +5849,11 @@ function fixOptions(i, a, b){
 }
 const labelOf = id => (S.performers.find(p => p.id === id) || {}).label || '';
 function fixText(f){ return f.kind === 'late' ? `${labelOf(f.id)}を${f.n}カウント遅れて出発（${f.tm[0] + 1}〜${f.tm[1]}カウントで移動）` : `${labelOf(f.id)}を${f.n}カウント早く到着（${f.tm[0] + 1}〜${f.tm[1]}カウントで移動）`; }
+// 着いた位置が近すぎる組は位置をずらす案、移動の途中でぶつかる組はタイミングの案
+function pairOptions(i, a, b){ return i === 0 || arrivalClose(i, a, b) ? posOptions(i, a, b) : fixOptions(i, a, b); }
 function collFind(){
   const i = ui.cur, r = analyzeAll()[i], list = [];
-  if (i > 0) r.coll.slice(0, 12).forEach(c => list.push({ a:c.a.id, b:c.b.id, count:c.count, opts:fixOptions(i, c.a.id, c.b.id) }));
+  r.coll.slice(0, 12).forEach(c => list.push({ a:c.a.id, b:c.b.id, count:c.count, arrive:i === 0 || arrivalClose(i, c.a.id, c.b.id), opts:pairOptions(i, c.a.id, c.b.id) }));
   ui.collSug = { i, ver:ui.ver, list };
   renderSide();
 }
@@ -5774,16 +5863,21 @@ function fixApply(id, a, b){
   const left = analyzeAll()[i].coll.length; toast(`${labelOf(id)}の動くタイミングを${+a + 1}〜${b}カウントにしました${left ? `（まだ接触 ${left}組）` : '。接触はなくなりました'}`);
 }
 function fixAll(){
-  const i = ui.cur, s = S.sets[i]; if (i < 1) return; ensureEdit(); const up0 = S.updated; pushHist();
-  let applied = 0;
-  for (let it = 0; it < 40; it++){
+  const i = ui.cur, s = S.sets[i]; ensureEdit(); const up0 = S.updated; pushHist();
+  let nt = 0, np = 0;
+  for (let it = 0; it < 60; it++){
     ui.ver++; const coll = analyzeAll()[i].coll; if (!coll.length) break; let did = false;
-    for (const c of coll){ const f = fixOptions(i, c.a.id, c.b.id)[0]; if (f){ s.tm = s.tm || {}; s.tm[f.id] = f.tm; applied++; did = true; break; } }
+    for (const c of coll){
+      const f = pairOptions(i, c.a.id, c.b.id)[0]; if (!f) continue;
+      if (f.kind === 'pos'){ s.pos[f.id] = [...f.q]; np++; } else { s.tm = s.tm || {}; s.tm[f.id] = f.tm; nt++; }
+      did = true; break;
+    }
     if (!did) break;
   }
-  if (!applied){ hist.pop(); S.updated = up0; ui.ver++; toast('タイミングを変えて直せる組が見つかりませんでした（着いた位置が近すぎるときは、位置を直してください）'); renderSide(); return; }
+  if (!nt && !np){ hist.pop(); S.updated = up0; ui.ver++; toast('直し方が見つかりませんでした。位置か道を手で直してください'); renderSide(); return; }
   ui.collSug = null; changed(true);
-  const left = analyzeAll()[i].coll.length; toast(`${applied}人の動くタイミングを変えました${left ? `。タイミングでは直せない接触が ${left}組 残っています` : '。このセットの接触はなくなりました'}`);
+  const left = analyzeAll()[i].coll.length, did = [nt ? `${nt}人の動くタイミング` : '', np ? `${np}人の位置` : ''].filter(Boolean).join('と');
+  toast(`${did}を変えました${left ? `。直せない接触が ${left}組 残っています` : '。このセットの接触はなくなりました'}`);
 }
 
 /* ---------- 間隔 ---------- */
@@ -5848,30 +5942,51 @@ function parseMS(v){
   return NaN;
 }
 let ruleMemo = { ver:-1, r:null };
-function inFloor(q){ const [hx, hy] = fieldHalf(), e = 1e-6; return Math.abs(q[0]) <= hx + e && Math.abs(q[1]) <= hy + e; }
+function inFloor(q){ return floorState(q) === 0; }
 function ruleCheck(){
   if (ruleMemo.ver === ui.ver && ruleMemo.r) return ruleMemo.r;
-  const lim = (S.rules && S.rules.limit) || 0, dur = secAt(total()), out = { lim, dur, over:lim ? dur - lim : 0, outside:[], bySet:new Map() };
-  if (S.rules && S.rules.inside){
+  const r = S.rules, on = (r && r.on) || {}, dur = secAt(total()), all = r.timeIn === 'all' ? r.entry + dur + r.exit : dur;
+  const out = { lim:on.time ? r.limit : 0, dur, total:all, over:on.time && r.limit ? all - r.limit : 0, outside:[], bySet:new Map() };
+  if (on.floor){
     const ids = S.performers.filter(p => !isDM(p)).map(p => p.id);
     S.sets.forEach((st, i) => {
-      const at = ids.filter(id => !inFloor(st.pos[id])); let during = [];
-      if (i > 0){ const C = +st.counts || 0, n = Math.max(1, Math.round(C)); during = ids.filter(id => { if (at.includes(id)) return false; for (let k = 1; k < n; k++) if (!inFloor(posInMove(i, id, C * k / n))) return true; return false; }); }
-      if (at.length || during.length){ const r = { i, at, during }; out.outside.push(r); out.bySet.set(i, r); }
+      const at = [], warn = []; ids.forEach(id => { const f = floorState(st.pos[id]); if (f === 2) at.push(id); else if (f === 1) warn.push(id); });
+      let during = [];
+      if (i > 0){ const C = +st.counts || 0, n = Math.max(1, Math.round(C)); during = ids.filter(id => { if (at.includes(id)) return false; for (let k = 1; k < n; k++) if (floorState(posInMove(i, id, C * k / n)) === 2) return true; return false; }); }
+      if (at.length || during.length || warn.length){ const x = { i, at, during, warn }; if (at.length || during.length) out.outside.push(x); out.bySet.set(i, x); }
     });
   }
   ruleMemo = { ver:ui.ver, r:out }; return out;
 }
+const TASKS = [['sq', '①3列以上の隊列で四角形ライン（20mライン）を一周（一番外側が20mライン上かその外・隊列全体が止まらない・スタート位置にもどる）'], ['ut', '②3列以上の隊列がセンターラインに沿って行進し、180度の方向転換（各列Uターン）を1回以上（前後に2歩以上まっすぐ）'], ['mt', '③足踏み演奏（マークタイム）を連続32歩以上（かかとが上がっていると分かるように）']];
 function rulesHTML(){
-  const r = ruleCheck(), lab = ids => ids.slice(0, 6).map(id => esc(labelOf(id))).join('・') + (ids.length > 6 ? ` ほか${ids.length - 6}人` : '');
-  let h = `<div class="issues"><h3>大会のルール</h3>`;
-  if (r.lim) h += `<div class="issue"><span class="chip ${r.over > 0 ? 'bad' : 'ok'}">${r.over > 0 ? '時間オーバー' : '時間OK'}</span><span>通し ${fmtTime(r.dur)} / 制限 ${fmtMS(r.lim)}${r.over > 0 ? `（<b>${fmtNum(r.over, 1)}秒</b> オーバー）` : `（あと ${fmtNum(-r.over, 1)}秒）`}</span></div>`;
-  else h += `<p class="note">演技の時間の制限は「設定」で入れられます。</p>`;
-  if (S.rules.inside){
-    if (!r.outside.length) h += `<div class="issue"><span class="chip ok">フロアの中</span><span class="note">全部のセットで、全員がフロアの中にいます。</span></div>`;
-    else r.outside.slice(0, 8).forEach(x => h += `<div class="issue" style="flex-wrap:wrap"><span class="chip bad">フロアの外</span><button class="mini" data-act="goSetX" data-i="${x.i}">${esc(setLabelAll(x.i))}</button><span class="note">${x.at.length ? `着いた位置：${lab(x.at)}` : ''}${x.at.length && x.during.length ? '／' : ''}${x.during.length ? `移動の途中：${lab(x.during)}` : ''}</span></div>`);
-    if (r.outside.length > 8) h += `<p class="note">ほか ${r.outside.length - 8}セット</p>`;
+  const r = S.rules, on = r.on || {}, c = ruleCheck(), P = RULE_PRESETS[r.preset], ed = ui.mode === 'edit';
+  if (!RULE_ITEMS.some(([k]) => on[k])) return `<div class="issues"><h3>大会のルール</h3><p class="note">「設定」タブで大会を選ぶと、時間・人数・演技エリアなどを調べます。</p></div>`;
+  const lab = ids => ids.slice(0, 6).map(id => esc(labelOf(id))).join('・') + (ids.length > 6 ? ` ほか${ids.length - 6}人` : '');
+  const row = (cls, chip, txt) => `<div class="issue" style="flex-wrap:wrap"><span class="chip ${cls}">${chip}</span><span>${txt}</span></div>`;
+  let h = `<div class="issues"><h3>大会のルール${P ? `：${esc(P.short)}` : ''}</h3>`;
+  if (on.time && r.limit){ const o = c.over;
+    h += row(o > 0 ? (r.over === 'warn' ? 'warn' : 'bad') : 'ok', o > 0 ? '時間オーバー' : '時間OK', `${r.timeIn === 'all' ? `入場〜退場 ${fmtTime(c.total)}（入場${r.entry}秒＋演技${fmtTime(c.dur)}＋退場${r.exit}秒の見込み）` : `演技 ${fmtTime(c.dur)}`} / 制限 ${fmtMS(r.limit)}${o > 0 ? `：<b>${fmtNum(o, 1)}秒</b> オーバー・${overText(o)}` : `（あと ${fmtNum(-o, 1)}秒）`}`); }
+  if (on.io && r.io){ const t = r.entry + r.exit; h += row(t > r.io ? 'bad' : 'ok', t > r.io ? '入退場オーバー' : '入退場OK', `入場${r.entry}秒＋退場${r.exit}秒＝${t}秒 / ${r.io}秒以内（見込みは「設定」で直せます）`); }
+  if (on.wait && r.wait) h += row(r.entry < r.wait ? 'bad' : 'ok', r.entry < r.wait ? '演奏が早すぎ' : '入場OK', `入場から演奏を始めるまで ${r.entry}秒の見込み（入場してから${r.wait}秒は演奏・演技できません）`);
+  if (on.people){ const n = peopleCount(), how = `${r.dmIn ? 'ドラムメジャーを含む' : 'ドラムメジャーは含まない'}${r.cond ? `・指揮者${r.cond}人を足す` : ''}`;
+    if (r.grp){ const hit = r.grp.find(x => n >= x[0] && n <= x[1]); h += row(hit ? 'ok' : 'bad', hit ? esc(hit[2]) : '人数が合わない', `${n}人（${how}）${hit ? ` → ${esc(hit[2])}（${hit[0]}〜${hit[1]}名）` : `：${r.grp.map(x => `${esc(x[2])} ${x[0]}〜${x[1]}名`).join('・')}`}`); }
+    else if (r.pMax || r.pMin){ const bad = (r.pMax && n > r.pMax) || (r.pMin && n < r.pMin); h += row(bad ? 'bad' : 'ok', bad ? '人数が合わない' : '人数OK', `${n}人（${how}） / ${r.pMin ? r.pMin + '〜' : ''}${r.pMax ? r.pMax + '名以内' : '名以上'}`); } }
+  if (on.dm && r.dm){ const d = countDM(); h += row(d === r.dm ? 'ok' : 'warn', `DM ${d}人`, `ドラムメジャーは${r.dm}名`); }
+  if (on.floor){
+    const A = ruleArea(), what = A ? `横${fmtNum(r.fw, 1)}m×縦${fmtNum(r.fd, 1)}m${r.ext.some(v => v > 0) ? `（外に出てよい幅 前${fmtNum(r.ext[0], 1)}・後ろ${fmtNum(r.ext[1], 1)}・左${fmtNum(r.ext[2], 1)}・右${fmtNum(r.ext[3], 1)}m）` : ''}` : 'フロア';
+    const pen = r.preset.startsWith('jmba') ? '（違反1回につき1点減点）' : '';
+    if (!c.outside.length) h += row('ok', 'エリアの中', `全部のセットで、全員が${what}の中にいます`);
+    else c.outside.slice(0, 8).forEach(x => h += `<div class="issue" style="flex-wrap:wrap"><span class="chip bad">エリアの外</span><button class="mini" data-act="goSetX" data-i="${x.i}">${esc(setLabelAll(x.i))}</button><span class="note">${x.at.length ? `着いた位置：${lab(x.at)}` : ''}${x.at.length && x.during.length ? '／' : ''}${x.during.length ? `移動の途中：${lab(x.during)}` : ''}${pen}</span></div>`);
+    if (c.outside.length > 8) h += `<p class="note">ほか ${c.outside.length - 8}セット</p>`;
+    const wn = [...c.bySet.values()].filter(x => x.warn.length);
+    if (wn.length) h += row('warn', 'はみ出し', `${wn.slice(0, 6).map(x => `${esc(setLabelAll(x.i))}（${lab(x.warn)}）`).join('、')}${wn.length > 6 ? ` ほか${wn.length - 6}セット` : ''}`);
   }
+  if (on.pit){ const pit = S.performers.filter(p => p.sec === 'Pit'); h += row(pit.length ? 'bad' : 'ok', pit.length ? 'ピットあり' : 'ピットなし', pit.length ? `ピット（据え置きの打楽器）が${pit.length}人います（${lab(pit.map(p => p.id))}）。この大会では使えません` : 'ピット（据え置きの打楽器）は使っていません'); }
+  if (on.tasks){ const done = r.done || {}, nDone = TASKS.filter(([k]) => done[k]).length;
+    h += row(nDone === 3 ? 'ok' : 'warn', `規定課題 ${nDone}/3`, '入れたら印を付けてください（どれか1つでもしないと失格になることがあります）');
+    TASKS.forEach(([k, t]) => h += `<label class="row taskrow"><input type="checkbox" data-rtask="${k}" ${done[k] ? 'checked' : ''} ${ed ? '' : 'disabled'}>${esc(t)}</label>`); }
+  if (P) h += `<details class="roster"><summary>この大会の注意（要項より）</summary><ul class="rulenotes">${P.notes.map(x => `<li>${esc(x)}</li>`).join('')}</ul><p class="note">出典：${srcLinks(P.src)}。要項は毎年変わるので、今年の要項で確かめてください。</p></details>`;
   return h + '</div>';
 }
 function toolsHTML(){
@@ -5905,12 +6020,12 @@ function collHTML(){
     h += `<div class="issue" style="flex-wrap:wrap"><span class="chip bad">接触</span><span class="mono">${esc(c.a.label)} × ${esc(c.b.label)}</span><span class="note">${i ? `カウント${c.count}付近` : 'この位置で近すぎ'}</span></div>`;
     const sg = sug && sug.find(x => x.a === c.a.id && x.b === c.b.id);
     if (sg){
-      if (!sg.opts.length) h += `<p class="note fixnote">タイミングでは直せません（着いた位置が近い・ほかの人ともぶつかる）。位置か道を直してください。</p>`;
-      else sg.opts.slice(0, 2).forEach(f => h += `<div class="row fixrow"><span class="note">→ ${esc(fixText(f))}</span>${ui.mode === 'edit' ? `<button class="mini" data-act="fixApply" data-id="${esc(f.id)}" data-a="${f.tm[0]}" data-b="${f.tm[1]}">これにする</button>` : ''}</div>`);
+      if (!sg.opts.length) h += `<p class="note fixnote">${sg.arrive ? '半歩・1歩ずらしても、ほかの人とぶつかるか歩幅が足りません。' : 'タイミングでは直せません（ほかの人ともぶつかる）。'}位置か道を手で直してください。</p>`;
+      else sg.opts.slice(0, 2).forEach(f => h += `<div class="row fixrow"><span class="note">→ ${esc(f.kind === 'pos' ? posText(f) : fixText(f))}</span>${ui.mode === 'edit' ? (f.kind === 'pos' ? `<button class="mini" data-act="posApply" data-id="${esc(f.id)}" data-x="${f.q[0]}" data-y="${f.q[1]}">これにする</button>` : `<button class="mini" data-act="fixApply" data-id="${esc(f.id)}" data-a="${f.tm[0]}" data-b="${f.tm[1]}">これにする</button>`) : ''}</div>`);
     }
   });
   if (r.coll.length > 8) h += `<p class="note">ほか ${r.coll.length - 8} 組</p>`;
-  if (i > 0 && ui.mode === 'edit') h += `<div class="row">${sug ? '' : '<button data-act="collFind">直し方を探す</button>'}<button data-act="fixAll">タイミングで全部直す</button></div><p class="note">出発を遅らせる・早く着くようにして、ぶつからないカウントを探します（歩幅の上限も守ります）。</p>`;
+  if (ui.mode === 'edit') h += `<div class="row">${sug ? '' : '<button data-act="collFind">直し方を探す</button>'}<button data-act="fixAll">全部直す</button></div><p class="note">移動の途中でぶつかる組は、出発を遅らせる・早く着くカウントを、着いた位置が近すぎる組は、半歩か1歩ずらす位置を探します（歩幅の上限も守ります）。</p>`;
   return h;
 }
 
@@ -5995,6 +6110,535 @@ function aboutHTML(){
   <div class="row"><button data-act="newsShow">更新内容</button><button data-act="coachStart">使い方ガイド（3分で1セット）</button><button data-act="welcomeShow">はじめての画面</button></div>`;
 }
 
+/* ====================================================================== */
+/* ---------- 音源：この端末に覚える・URL から読む・音源込みファイル・音量 ---------- */
+const songKey = g => { const s = S.songs[g]; if (!s) return ''; if (!s.id) s.id = Math.random().toString(36).slice(2, 9); return S.id + '|' + s.id; };
+// この端末（ブラウザ）の中の保存場所（IndexedDB）。音源は大きいので、ショーのデータとは別に置く
+let audDBp = null;
+function audDB(){
+  if (audDBp) return audDBp;
+  audDBp = new Promise((res, rej) => {
+    try { const rq = indexedDB.open('drillboard-audio', 1); rq.onupgradeneeded = () => rq.result.createObjectStore('a'); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); rq.onblocked = () => rej(new Error('blocked')); }
+    catch (e) { rej(e); }
+  });
+  audDBp.catch(() => { audDBp = null; });
+  return audDBp;
+}
+async function idbDo(mode, fn){
+  const db = await audDB();
+  return new Promise((res, rej) => { const tx = db.transaction('a', mode), r = fn(tx.objectStore('a')); let out; if (r) r.onsuccess = () => { out = r.result; }; tx.oncomplete = () => res(out); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); });
+}
+const audSave = (key, rec) => idbDo('readwrite', st => st.put(rec, key));
+const audLoad = key => idbDo('readonly', st => st.get(key));
+const audDelete = key => idbDo('readwrite', st => st.delete(key));
+async function audStoreList(){
+  const db = await audDB();
+  return new Promise((res, rej) => { const out = [], tx = db.transaction('a', 'readonly'), rq = tx.objectStore('a').openCursor();
+    rq.onsuccess = () => { const c = rq.result; if (!c) return; const v = c.value || {}; out.push({ key:c.key, name:v.name, size:v.buf ? v.buf.byteLength : 0, at:v.at, title:v.title, song:v.song }); c.continue(); };
+    tx.oncomplete = () => res(out); tx.onerror = () => rej(tx.error); });
+}
+const fmtMB = n => n >= 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(n / 1024)) + 'KB';
+// 音源を曲 g に付ける（前の音源は止めて外す）
+function setAudioObj(g, A){
+  const old = ui.audios[g];
+  if (old && old !== A){ pauseAudio(old); if (old.own) try { URL.revokeObjectURL(old.el.src); } catch (e) {} }
+  ui.audios[g] = A || null; if (!A) return;
+  A.el.preload = 'auto'; setRate(A); try { A.el.volume = clamp(ui.musicVol == null ? 1 : ui.musicVol, 0, 1); } catch (e) {}
+  A.el.addEventListener('loadedmetadata', () => { if (ui.audios[g] === A && ui.tab === 'aud') drawAud(); });
+  A.el.addEventListener('error', () => {
+    if (ui.audios[g] !== A) return; A.err = true;
+    if (A.remote) toast(`「${S.songs[g] ? S.songs[g].name : ''}」の音源をURLから読み込めませんでした。URLと、だれでも見られる公開の設定になっているかを確かめてください`);
+    if (ui.tab === 'aud' || ui.tab === 'conf') renderSide();
+  });
+}
+function audFromBlob(blob, name, g){ return { el:new Audio(URL.createObjectURL(blob)), name:name || blob.name || '音源', file:blob, own:true, key:g != null ? songKey(g) : '' }; }
+// 共有リンク・QRで開いた人のために、ネット上の置き場所（URL）から読む
+function normAudioURL(u){
+  u = String(u || '').trim(); if (!u) return '';
+  const m = /drive\.google\.com\/file\/d\/([\w-]+)/.exec(u) || /drive\.google\.com\/(?:open|uc)\?(?:.*&)?id=([\w-]+)/.exec(u);
+  if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
+  if (/(^|\.)dropbox\.com\//.test(u.replace(/^https?:\/\//, ''))){ u = u.replace(/([?&])dl=\d&?/, '$1').replace(/[?&]$/, ''); return u + (u.includes('?') ? '&' : '?') + 'raw=1'; }
+  try { return new URL(u, location.href).href; } catch (e) { return u; }
+}
+function audFromURL(url, g){ const el = new Audio(); el.preload = 'auto'; el.src = normAudioURL(url); return { el, name:(String(url).split('?')[0].split('/').pop() || '音源'), url:el.src, remote:true, key:songKey(g) }; }
+async function audSetFile(g, f){
+  setAudioObj(g, audFromBlob(f, f.name, g)); try { renderSide(); } catch (e) {} analyzeSongAudio(g);
+  try { await audSave(songKey(g), { buf:await f.arrayBuffer(), type:f.type || 'audio/mpeg', name:f.name, at:Date.now(), title:S.title, song:S.songs[g].name }); if (ui.audios[g]) ui.audios[g].stored = true; if (ui.tab === 'aud' || ui.tab === 'conf') renderSide(); }
+  catch (e) { toast('この端末に音源を覚えられませんでした（空き容量が足りないかもしれません）。次に開いたときは、もう一度選んでください'); }
+}
+async function audClear(g){
+  const A = ui.audios[g]; setAudioObj(g, null);
+  try { await audDelete(songKey(g)); } catch (e) {}
+  if (S.songs[g] && S.songs[g].url && !(A && A.remote)) setAudioObj(g, audFromURL(S.songs[g].url, g));
+  renderSide();
+}
+// ショーを開いたとき：この端末に覚えている音源（なければURL）を付け直す
+let audJob = 0;
+async function audRestore(){
+  const job = ++audJob, sid = S.id;
+  ui.audios.length = Math.min(ui.audios.length, S.songs.length);
+  for (let g = 0; g < S.songs.length; g++){
+    if (job !== audJob || S.id !== sid) return;
+    const key = songKey(g), A = ui.audios[g]; if (A && A.key === key) continue;
+    let rec = null; try { rec = await audLoad(key); } catch (e) {}
+    if (job !== audJob || S.id !== sid) return;
+    if (ui.audios[g] && ui.audios[g].key === key) continue;   // 待っている間に付けられた
+    if (rec && rec.buf){ const a = audFromBlob(new Blob([rec.buf], { type:rec.type || 'audio/mpeg' }), rec.name, g); a.stored = true; setAudioObj(g, a); }
+    else if (S.songs[g].url) setAudioObj(g, audFromURL(S.songs[g].url, g));
+    else setAudioObj(g, null);
+  }
+  if (job === audJob && (ui.tab === 'aud' || ui.tab === 'conf')) renderSide();
+}
+// ショーの印（id）が変わったとき（別のショーとして保存など）、音源も新しい印で覚え直す
+async function audRekey(){
+  for (let g = 0; g < S.songs.length; g++){ const A = ui.audios[g]; if (!A || !A.file) continue; A.key = songKey(g);
+    try { await audSave(A.key, { buf:await A.file.arrayBuffer(), type:A.file.type || 'audio/mpeg', name:A.name, at:Date.now(), title:S.title, song:S.songs[g].name }); } catch (e) {} }
+}
+// 音源込みのファイル（ショーのデータ＋音声ファイル）
+function blobToB64(b){ return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error); r.readAsDataURL(b); }); }
+function b64ToBlob(s, type){ const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type }); }
+const hasLocalAudio = () => ui.audios.some(A => A && A.file);
+async function makePack(){
+  const code = await makeCode(S), audio = [];
+  for (let g = 0; g < S.songs.length; g++){ const A = ui.audios[g]; if (!A || !A.file) continue; audio.push({ song:S.songs[g].id, songName:S.songs[g].name, name:A.name, type:A.file.type || 'audio/mpeg', data:await blobToB64(A.file) }); }
+  return { text:JSON.stringify({ drillboard:'pack', v:1, title:S.title, code, audio }), n:audio.length };
+}
+async function savePack(share){
+  if (!hasLocalAudio()) return toast('この端末で読み込んだ音源がありません。「音源」タブで曲ごとに音声ファイルを選んでください（URLから読んでいる音源は入りません）');
+  toast('音源込みのファイルを作っています…');
+  const p = await makePack(), name = `${safeName(S.title)}_音源込み.json`, blob = new Blob([p.text], { type:'application/json' });
+  if (share){
+    const file = new File([blob], name, { type:'application/json' });
+    if (navigator.canShare && navigator.canShare({ files:[file] })){
+      try { await navigator.share({ files:[file], title:S.title, text:`ドリルボードのショー「${S.title}」（音源${p.n}曲込み）。ドリルボードの「保存・共有」→「ファイルを開く」で開けます` }); markExported(); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+  }
+  await saveOut(name, blob, `音源${p.n}曲込みのファイルを保存しました（${fmtMB(blob.size)}）。受け取った人は「保存・共有」→「ファイルを開く」で音源ごと開けます`);
+  markExported();
+}
+async function openPack(text){
+  let o; try { o = JSON.parse(text); } catch (e) { return false; }
+  if (!o || o.drillboard !== 'pack' || !o.code) return false;
+  let sh; try { sh = await readCode(o.code); } catch (e) { toast('このファイルのショーを読めませんでした'); return true; }
+  stop(); pushHist(); S = sh; ui.cur = 0; ui.t = 0; ui.sel.clear(); ui.clip = null; afterLoad(true);
+  let n = 0;
+  for (const a of (o.audio || [])){
+    let g = S.songs.findIndex(x => x.id === a.song); if (g < 0) g = S.songs.findIndex(x => x.name === a.songName); if (g < 0 || !a.data) continue;
+    const blob = b64ToBlob(a.data, a.type || 'audio/mpeg'), A = audFromBlob(blob, a.name, g); setAudioObj(g, A); n++;
+    try { await audSave(songKey(g), { buf:await blob.arrayBuffer(), type:blob.type, name:a.name, at:Date.now(), title:S.title, song:S.songs[g].name }); A.stored = true; } catch (e) {}
+  }
+  renderSide(); toast(`「${S.title}」を音源${n}曲込みで開きました。音源はこの端末に覚えておきます`);
+  return true;
+}
+function setMusicVol(v){ ui.musicVol = clamp(+v, 0, 1); pracSave(); ui.audios.forEach(A => { if (A) try { A.el.volume = ui.musicVol; } catch (e) {} }); }
+function setClickVol(v){ ui.clickVol = clamp(+v, 0, 1.5); pracSave(); }
+// クリック：小節の頭（1拍目）を高い音に
+function clickAccentAt(n){
+  if (!ui.clickAccent) return false;
+  const i = segIdxCtx(n - 0.5), g = songOf(i), gs = songRange(g)[0], m = S.songs[g].meter || 4;
+  return ((Math.round(n - gs) - 1) % m + m) % m === 0;
+}
+const firstClick = t => ui.clickSub ? Math.floor(t * 2 + 1e-6) / 2 + 0.5 : Math.floor(t + 1e-6) + 1;
+const nextClickAfter = n => ui.clickSub ? Math.round(n * 2 + 1) / 2 : Math.floor(n + 1e-6) + 1;
+// カウントインで音源の前の小節も鳴らす：曲 g の音源で、t0（カウント）の pre カウント前から鳴らし始める
+function ciMusicStart(t0, preCounts){
+  if (ui.ciMusic === false) return false;
+  const g = songAtT(t0 + 1e-6), A = audioOf(g); if (!A || A.err) return false;
+  const st = songTime(g); if (!st) return false;
+  const pos = offOf(g) + (secAt(t0) - secAt(songRange(g)[0])), beat = Math.max(0.08, (secAt(Math.min(total(), t0 + 1)) - secAt(t0)) || 60 / bpmOf(segIdxCtx(t0)));
+  ui.playSong = g; playAudioAt(A, pos - preCounts * beat); return true;
+}
+function volHTML(){
+  return `<div class="row volrow"><span class="note">音量</span><label>音源<input type="range" id="volMusic" min="0" max="1" step="0.05" value="${ui.musicVol == null ? 1 : ui.musicVol}"></label><label>クリック<input type="range" id="volClick" min="0" max="1.5" step="0.05" value="${ui.clickVol == null ? 1 : ui.clickVol}"></label></div>
+  ${/iPad|iPhone|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1) ? '<p class="note">iPhone・iPad では、音源の音量は本体のボタンで変えます（ここではクリックの音量だけ変わります）。</p>' : ''}`;
+}
+function clickOptHTML(){
+  return `<label class="row"><input type="checkbox" id="clickAccent" ${ui.clickAccent ? 'checked' : ''}>小節の頭（1拍目）のクリックを高い音にする</label>
+  <label class="row"><input type="checkbox" id="clickSub" ${ui.clickSub ? 'checked' : ''}>裏拍（拍と拍の間）にも小さいクリックを入れる</label>`;
+}
+// 音源の一覧（設定タブ）：この端末に覚えている音源
+async function audStoreHTMLFill(){
+  const el = document.getElementById('audStore'); if (!el) return;
+  let list = []; try { list = await audStoreList(); } catch (e) { el.innerHTML = '<p class="note">この端末の保存場所が使えません（プライベートブラウズなど）。音源は開くたびに選んでください。</p>'; return; }
+  const mine = list.filter(x => String(x.key).startsWith(S.id + '|')), tot = list.reduce((a, x) => a + x.size, 0);
+  el.innerHTML = `<p class="note">この端末に覚えている音源：${list.length}曲・${fmtMB(tot)}（このショー ${mine.length}曲）。ショーを開くと自動で付きます。</p>${list.length ? `<div class="row"><button data-act="audStoreClear" class="danger">この端末の音源を全部消す</button><span class="note">（ショーのデータは消えません）</span></div>` : ''}`;
+}
+
+/* ---------- ベルフロント ---------- */
+// 移動中も止まっている間も、体（楽器のベル）を客席に向けたまま。横・後ろへはスライドで進む
+const FRONT_DEG = 270;
+function isBellFront(i, id){ return i > 0 && mvOf(i, id) === 'a'; }
+function bellFront(on, ids, sets){
+  ids = (ids || dirTargets()).filter(id => { const p = S.performers.find(x => x.id === id); return p && !isDM(p); });
+  sets = sets || dirRangeSets(); if (!ids.length) return toast('人がいません');
+  ensureEdit(); pushHist();
+  sets.forEach(j => {
+    const s = S.sets[j];
+    if (j > 0){ s.mv = s.mv || {}; ids.forEach(id => { if (on) s.mv[id] = 'a'; else if (s.mv[id] === 'a') delete s.mv[id]; }); if (!Object.keys(s.mv).length) delete s.mv; }
+    s.face = s.face || {}; ids.forEach(id => { if (on) s.face[id] = FRONT_DEG; else if (s.face[id] === FRONT_DEG) delete s.face[id]; }); if (!Object.keys(s.face).length) delete s.face;
+  });
+  changed(true);
+  const who = ui.sel.size && !ui.dirAll ? `${ids.length}人` : '全員', where = sets.length === 1 ? `「${S.sets[sets[0]].name}」` : `${sets.length}セット`;
+  toast(on ? `${who}を${where}でベルフロント（客席に向けたまま）にしました` : `${who}の${where}のベルフロントをやめました`);
+}
+function bellQuick(){
+  if (ui.mode !== 'edit') return;
+  const ids = moveTargets().filter(id => { const p = S.performers.find(x => x.id === id); return p && !isDM(p); });
+  const all = ids.length && ids.every(id => (ui.cur === 0 || isBellFront(ui.cur, id)) && faceAt(ui.cur, id) === FRONT_DEG);
+  bellFront(!all, ids, [ui.cur]);
+}
+function bellHTML(){
+  return `<p class="note" style="margin-top:4px"><b>ベルフロント</b></p>
+  <div class="row"><button data-act="bellFront" data-v="1" class="primary">ベルフロントにする</button><button data-act="bellFront" data-v="0">ベルフロントをやめる</button></div>
+  <p class="note">移動中も着いてからも、体（楽器のベル）を客席に向けたままにします。横や後ろへはスライドで進みます。対象と範囲（このセット・この曲・ここから最後まで）は上で選べます。ドットシートには「ベルフロント」と出ます。</p>`;
+}
+
+/* ---------- メモ：セットを選んで書く・一覧 ---------- */
+function noteIdx(){ return ui.noteSet != null && ui.noteFor === ui.cur && S.sets[ui.noteSet] ? ui.noteSet : ui.cur; }
+function pnIdx(){ return ui.pnSet != null && ui.pnFor === ui.cur && S.sets[ui.pnSet] ? ui.pnSet : ui.cur; }
+function setOptsHTML(sel, mark){ return S.sets.map((st, k) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(setLabelAll(k))}${mark && mark(k) ? '　📝' : ''}</option>`).join(''); }
+function noteBoxHTML(){
+  const j = noteIdx(), s = S.sets[j], n = S.sets.filter(x => x.note).length;
+  const list = S.sets.map((st, k) => st.note ? `<div class="notelist-item ${k === j ? 'on' : ''}"><button class="mini" data-act="noteSel" data-i="${k}">${esc(setLabelAll(k))}</button><span>${esc(shortNote(st.note, 70))}</span></div>` : '').join('');
+  return `<div class="notebox"><span class="note">メモ（全員のドットシート・印刷したコンテに出ます）</span>
+    <div class="row"><select id="noteSetSel" aria-label="メモを書くセット">${setOptsHTML(j, k => S.sets[k].note)}</select>${j !== ui.cur ? `<button class="mini" data-act="noteSel" data-i="${ui.cur}">今のセットにもどす</button>` : ''}</div>
+    <textarea id="setNote" rows="2" maxlength="${NOTE_MAX}" placeholder="例：ここで楽器を構える／Tp はベルアップ">${esc(s.note || '')}</textarea>
+    ${n ? `<details class="roster" id="noteList" ${ui.noteListOpen ? 'open' : ''}><summary>メモのあるセット（${n}）</summary><div class="notelist">${list}</div></details>` : ''}</div>`;
+}
+function pnBoxHTML(p){
+  const j = pnIdx(), v = personalNote(j, p.id), n = S.sets.filter((x, k) => personalNote(k, p.id)).length;
+  return `<div class="notebox"><span class="note">${esc(p.label)}のメモ（この人のドットシートにだけ出ます）</span>
+    <div class="row"><select id="pnSetSel" aria-label="メモを書くセット">${setOptsHTML(j, k => personalNote(k, p.id))}</select>${j !== ui.cur ? `<button class="mini" data-act="pnSel" data-i="${ui.cur}">今のセットにもどす</button>` : ''}${n ? `<span class="note">メモのあるセット ${n}</span>` : ''}</div>
+    <textarea id="pnNote" rows="2" maxlength="${PNOTE_MAX}" placeholder="例：ここでベルアップ／Tb2 の後ろを通る">${esc(v)}</textarea></div>`;
+}
+
+/* ---------- 着いた位置が近すぎるとき：半歩・1歩ずらす案 ---------- */
+const dirWord = (dx, dy) => dx > 0 ? '右' : dx < 0 ? '左' : dy > 0 ? '後ろ' : '前';
+function arrivalClose(i, a, b){ const P = S.sets[i].pos; return dist(P[a], P[b]) < 0.6 * stepM(); }
+function posOptions(i, a, b){
+  const thr = 0.6 * stepM(), st = stepM(), P = S.sets[i].pos, out = [];
+  for (const id of [a, b]){
+    if (ftlOf(i, id)) continue;
+    const o = id === a ? b : a, B0 = [...P[id]], away = [B0[0] - P[o][0], B0[1] - P[o][1]], cands = [];
+    for (const k of [0.5, 1]) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) cands.push([dx * k * st, dy * k * st, k]);
+    cands.sort((u, v) => (u[2] - v[2]) || ((v[0] * away[0] + v[1] * away[1]) - (u[0] * away[0] + u[1] * away[1])));
+    for (const [dx, dy, k] of cands){
+      const q = [Math.round((B0[0] + dx) * 1e6) / 1e6, Math.round((B0[1] + dy) * 1e6) / 1e6];
+      if (S.performers.some(p => p.id !== id && P[p.id] && dist(P[p.id], q) < thr)) continue;
+      P[id] = q; let ok = true;
+      try {
+        if (i > 0) ok = !hitsDuring(i, id, othersDuring(i, id)) && strideOK(i, id);
+        if (ok && i + 1 < S.sets.length) ok = strideOK(i + 1, id);
+      } finally { P[id] = B0; }
+      if (ok){ out.push({ kind:'pos', id, dx, dy, k, q }); break; }
+    }
+  }
+  return out.sort((x, y) => x.k - y.k);
+}
+function posText(f){ return `${labelOf(f.id)}を${dirWord(f.dx, f.dy)}へ${f.k === 0.5 ? '半歩' : '1歩'}ずらす`; }
+function posApply(id, x, y){
+  const i = ui.cur, P = S.sets[i].pos; if (!P[id]) return; ensureEdit(); pushHist(); P[id] = [+x, +y]; ui.collSug = null; changed(true);
+  const left = analyzeAll()[i].coll.length; toast(`${labelOf(id)}の位置をずらしました${left ? `（まだ接触 ${left}組）` : '。接触はなくなりました'}`);
+}
+
+/* ---------- 歩幅のばらつき（同じセットで大股と小股が混ざる） ---------- */
+let spreadMemo = { ver:-1, m:new Map() };
+function strideSpread(i){
+  if (i < 1 || S.freeStride) return null;
+  if (spreadMemo.ver !== ui.ver) spreadMemo = { ver:ui.ver, m:new Map() };
+  if (spreadMemo.m.has(i)) return spreadMemo.m.get(i);
+  const rows = [], st = stepM();
+  S.performers.forEach(p => { if (isDM(p) || isFree(i, p.id)) return; const si = strideInfo(i, p.id); if (si.len < 2 * st || !isFinite(si.per) || si.per <= 0) return; rows.push({ id:p.id, N:unit5() / si.per }); });
+  let r = null;
+  if (rows.length >= 2){
+    rows.sort((a, b) => a.N - b.N);
+    const big = rows[0], small = rows[rows.length - 1], ratio = small.N / big.N;
+    const nBig = rows.filter(x => x.N <= big.N * 1.2).length, nSmall = rows.filter(x => x.N >= small.N / 1.2).length;
+    // 大股の人も小股の人も3人以上いて、歩幅が3倍以上ちがうとき
+    r = { big, small, ratio, rows, nBig, nSmall, med:median(rows.map(x => x.N)), mixed:ratio >= 3 && nBig >= 3 && nSmall >= 3 };
+  }
+  spreadMemo.m.set(i, r); return r;
+}
+function spreadHTML(i){
+  const r = strideSpread(i); if (!r || !r.mixed) return '';
+  const ed = ui.mode === 'edit';
+  return `<div class="issue" style="flex-wrap:wrap"><span class="chip warn">歩幅のばらつき</span><span>大股 <b class="mono">${fmtNum(r.big.N, 1)} to 5</b>（${esc(labelOf(r.big.id))} など${r.nBig}人）と小股 <b class="mono">${fmtNum(r.small.N, 1)} to 5</b>（${esc(labelOf(r.small.id))} など${r.nSmall}人）が混ざっています（歩幅が${fmtNum(r.ratio, 1)}倍ちがう）</span></div>
+  ${ed ? `<div class="row fixrow"><button class="mini" data-act="spreadSel">大股・小股の人を選ぶ</button><button class="mini" data-act="spreadFix">小股の人を遅れて出発させて、歩幅をそろえる</button></div>` : ''}
+  <p class="note fixnote">同じセットで大股と小股が混ざると、動きがそろって見えにくくなります（わざとそうしているなら問題ありません）。このセットのふつうの歩幅は ${fmtNum(r.med, 1)} to 5 です。</p>`;
+}
+function spreadSel(){
+  const r = strideSpread(ui.cur); if (!r) return;
+  const ids = r.rows.filter(x => x.N <= r.big.N * 1.15 || x.N >= r.small.N / 1.15).map(x => x.id);
+  ui.sel = new Set(ids); onSel(); toast(`大股・小股の${ids.length}人を選びました`);
+}
+// 小股の人：ふつうの歩幅で歩ける分だけ、出発を遅らせる（着く時刻は同じ）
+function spreadFix(){
+  const i = ui.cur, r = strideSpread(i); if (!r) return; const s = S.sets[i], target = r.med;
+  ensureEdit(); pushHist(); let n = 0;
+  r.rows.forEach(x => {
+    if (x.N <= target * 1.25 || ftlOf(i, x.id) || ftlLeadOf(i, x.id) || (s.wp && s.wp[x.id])) return;
+    const m = moveSpec(i, x.id), si = strideInfo(i, x.id), need = Math.ceil(si.len / (unit5() / target) - 1e-6);
+    const a = Math.max(m.a, m.b - Math.max(1, need)); if (a <= m.a) return;
+    s.tm = s.tm || {}; s.tm[x.id] = [a, m.b]; n++;
+  });
+  if (!n){ hist.pop(); return toast('そろえられる人がいませんでした'); }
+  ui.ver++; const left = analyzeAll()[i].coll.length;
+  changed(true); toast(`${n}人の出発を遅らせて、歩幅をそろえました${left ? `。接触が ${left}組 あります。確かめてください` : ''}`);
+}
+
+/* ---------- パートリーダー用：パート全員を1枚に ---------- */
+function partSecs(who){
+  const fp = S.performers.find(p => p.id === ui.focus) || S.performers.find(p => !isDM(p));
+  if (who === 'all') return SECTIONS.map(x => x.k).filter(k => k !== 'DM' && S.performers.some(p => p.sec === k));
+  return fp ? [fp.sec] : [];
+}
+async function buildPartPrint(o){
+  o = Object.assign({ who:'sec', fmt:ui.posFmt, mini:false, paper:true }, o || {});
+  const T = tl(), stamp = S.updated ? fmtStamp(S.updated) : '', [hx, hy] = fieldHalf(), wide = hx / hy > 1.3;
+  let html = '', pages = 0;
+  const mc = o.mini ? canvasOf(...printCanvasSize(wide ? 900 : 600)) : null;
+  for (const sec of partSecs(o.who)){
+    const mem = S.performers.filter(p => p.sec === sec), PER = 9;
+    for (let c0 = 0; c0 < mem.length; c0 += PER){
+      const cols = mem.slice(c0, c0 + PER); let rows = '', lastSg = -1;
+      const rowsOf = cols.map(p => dotRows(p.id, o.fmt));
+      S.sets.forEach((s, i) => {
+        if (S.songs.length > 1 && s.sg !== lastSg){ rows += `<tr class="songrow"><td colspan="${cols.length + 3}">${esc(S.songs[s.sg].name)}</td></tr>`; lastSg = s.sg; }
+        const notes = [s.note, ...cols.map(p => personalNote(i, p.id) ? `${p.label}：${personalNote(i, p.id)}` : '')].filter(Boolean);
+        rows += `<tr><td><b>${esc(s.name)}</b>${s.rm ? ` <span class="rm">${esc(s.rm)}</span>` : ''}<br><small>m.${barOf(i)}</small></td><td class="num">${i ? s.counts : 0}${s.hold ? `<small>+${s.hold}</small>` : ''}</td>`
+          + cols.map((p, k) => { const r = rowsOf[k][i]; return `<td>${esc(r.lr)}<br>${esc(r.fb)}${i ? `<br><small>${esc(r.move)}</small>` : ''}</td>`; }).join('')
+          + `<td class="pnote">${notes.map(esc).join('<br>')}</td></tr>`;
+      });
+      let minis = '';
+      if (mc){
+        for (let i = 0; i < S.sets.length; i++){
+          if (i % 6 === 0){ toast(`印刷の準備をしています…（${esc(secOf(sec).n)} ${i + 1}/${S.sets.length}）`); await tick0(); }
+          renderPrint(mc, T[i].arrive, { paper:o.paper, focusSet:cols.map(p => p.id), paths:i > 0 });
+          minis += `<figure><img src="${await imgURL(mc)}" alt=""><figcaption><b>${esc(S.sets[i].name)}</b>${S.sets[i].rm ? ` [${esc(S.sets[i].rm)}]` : ''}</figcaption></figure>`;
+        }
+      }
+      html += `<section class="pp part"><header class="ms-head"><div class="ms-left"><div class="ms-show">${esc(S.title)}${stamp ? `<small>${esc(stamp)}</small>` : ''}</div>
+        <div class="ms-name">${esc(secOf(sec).n)}<small>${mem.length}人${mem.length > PER ? `（${c0 + 1}〜${Math.min(mem.length, c0 + PER)}人目）` : ''}</small></div><div class="ms-fmt">${esc(posFmtNote(o.fmt))} 各マスは上が左右・下が前後、その下が動き。</div></div></header>
+        <table class="pt-tbl"><thead><tr><th>セット</th><th>カウント</th>${cols.map(p => `<th>${esc(p.label)}</th>`).join('')}<th>メモ</th></tr></thead><tbody>${rows}</tbody></table>
+        ${minis ? `<div class="ms-minis">${minis}</div>` : ''}<div class="ms-foot">ドリルボード · パートまとめ</div></section>`;
+      pages++; await tick0();
+    }
+  }
+  return { html, land:true, n:pages };
+}
+
+/* ---------- サイトに置いたショー（いつも最新・短いリンク） ---------- */
+// ショーのデータのファイルを GitHub Pages など同じサイトに置くと、「?show=置き場所」の短いリンクで開ける。上げ直せば、開いた人には新しい版が出る
+const SRC_RE = /^[\w\-./%~]+\.(txt|json)$|^https?:\/\/\S+$/i;
+function srcURL(src){ try { return new URL(src, location.href).href; } catch (e) { return ''; } }
+function showLink(extra){ const base = location.origin + location.pathname; return S.src ? `${base}?show=${encodeURIComponent(S.src).replace(/%2F/g, '/')}${extra || ''}` : ''; }
+async function fetchShow(src){
+  const r = await fetch(srcURL(src), { cache:'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status);
+  return readCode(await r.text());
+}
+function slugify(s){ const a = String(s || '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); return a || 'show'; }
+function srcHTML(){
+  const def = S.src || `shows/${slugify(S.title)}.txt`;
+  return `<h3 class="shh link-only">サイトに置いて配る（いつも最新・短いリンク）</h3>
+  <div class="link-only srcbox">
+    <p class="note">ショーのデータを、このアプリと同じ GitHub のリポジトリに置くと、「?show=置き場所」の短いリンクやQRコードで開けます。直したときは、同じ名前で上げ直すだけで、開いた人には新しい版が出ます（音源のURLも一緒に届きます）。</p>
+    <div class="row"><span class="note">置く場所</span><input type="text" id="srcPath" value="${esc(def)}" style="flex:1;min-width:12em" aria-label="置く場所"></div>
+    <div class="row"><button data-act="srcSave" ${S.src ? '' : 'class="primary"'}>① サイト用のファイルを保存</button><button data-act="srcCheck">③ 置いた場所を確かめる</button></div>
+    <p class="note">① で保存したファイル（${esc(def.split('/').pop())}）を、② GitHub の drillboard に「${esc(def.includes('/') ? def.split('/').slice(0, -1).join('/') : '（いちばん上）')}」フォルダを作って上げ、数分待ってから ③ を押してください。置いたファイルは、場所を知っている人ならだれでも開けます。</p>
+    ${S.src ? `<div class="row"><span class="chip ok">設定ずみ</span><span class="note mono">${esc(S.src)}</span><button data-act="srcCopy" class="primary">短いリンクをコピー</button><button data-act="srcQR">QRコード</button><button data-act="srcOff" class="mini">やめる</button></div>` : ''}
+  </div>`;
+}
+async function srcSave(){
+  const path = ($('#srcPath') && $('#srcPath').value.trim()) || `shows/${slugify(S.title)}.txt`;
+  if (!SRC_RE.test(path)) return toast('置く場所は「shows/名前.txt」のように、半角の英数字で書いてください');
+  ui.srcPath = path;
+  await saveOut(path.split('/').pop(), await makeCode(S), `「${path.split('/').pop()}」を保存しました。GitHub の drillboard に「${path}」になるように上げてください`);
+}
+async function srcCheck(){
+  const path = ($('#srcPath') && $('#srcPath').value.trim()) || ui.srcPath || '';
+  if (!SRC_RE.test(path)) return toast('置く場所は「shows/名前.txt」のように書いてください');
+  let sh; try { sh = await fetchShow(path); } catch (e) { return toast(`「${path}」が見つかりませんでした。上げてから数分かかることがあります。少し待ってからもう一度`); }
+  if (sh.id !== S.id) return toast('置いてあるのは、別のショーのファイルです。①で保存したファイルを上げてください');
+  pushHist(); S.src = path; changed(true); renderFileExtras();
+  toast(`見つかりました（${sh.updated ? fmtStamp(sh.updated) : '日時なし'}）。これからは短いリンクで配れます${(sh.updated || 0) < (S.updated || 0) - 60000 ? '。置いてあるのは手元より古い版です。直したら①から上げ直してください' : ''}`);
+}
+// 「?show=」「?me=」「?set=」で開いたとき
+async function openFromQuery(){
+  const q = new URLSearchParams(location.search), src = q.get('show'), me = q.get('me') || '', set = q.get('set');
+  if (!src) return false;
+  let sh; try { sh = await fetchShow(src); } catch (e) { toast('サイトに置いたショーを読めませんでした。ネットにつながっているか確かめてください'); return true; }
+  if (!sh.src) sh.src = src;
+  await openShared(sh, me, { quietSame:true });
+  if (set != null && S.sets[+set]){ goSet(+set); }
+  return true;
+}
+
+/* ---------- 全員の自分用リンクの一覧（LINE で配る用） ---------- */
+const LINE_MAX = 10000;
+async function linkList(){
+  if (!canLink()) return toast('このページの開き方では、リンクを作れません（GitHub Pages などで開いたときに使えます）');
+  const base = location.origin + location.pathname, ps = SECTIONS.flatMap(x => S.performers.filter(p => p.sec === x.k));
+  const stamp = S.updated ? `（${fmtStamp(S.updated, true)}）` : '';
+  let text, head = '', names;
+  if (S.src){
+    names = ps.map(p => `${p.label}（${secOf(p.sec).n}）\n${showLink('&me=' + encodeURIComponent(p.label))}`).join('\n');
+    text = `ドリルボード「${S.title}」${stamp}\n自分の名前のリンクを開くと、自分のドットシートが出ます（いつも最新の版が開きます）\n\n${names}`;
+  } else {
+    const full = base + '#d=' + await makeCode(S);
+    head = `ドリルボード「${S.title}」${stamp}\n① まずこのリンクを開いてください（ショーが入ります）\n${full}`;
+    names = `② 次に自分の名前のリンクを開くと、自分のドットシートが出ます（次からはこれだけで開けます）\n` + ps.map(p => `${p.label}（${secOf(p.sec).n}） ${base}?me=${encodeURIComponent(p.label)}`).join('\n');
+    text = head + '\n\n' + names;
+  }
+  const over = text.length > LINE_MAX, prev = text.replace(/(#d=DRILL3:\S{24})\S+/g, '$1…');   // 見本では長いリンクを縮める
+  const v = await ask('全員の自分用リンク', `<p class="note">${ps.length}人分のリンクを名前つきで並べます。LINE のグループなどに貼って配れます。${S.src ? 'サイトに置いたショーを開く短いリンクです。' : '「サイトに置いて配る」を設定すると、1人1つの短いリンクだけで配れます（「保存・共有」から）。'}</p>
+    <pre class="linkprev">${esc(prev.slice(0, 900))}${prev.length > 900 ? '\n…' : ''}</pre>
+    <p class="note">全部で ${text.length.toLocaleString()}文字です。${over ? `<b>LINE の1回のメッセージ（1万文字まで）に入りきらないので、①と②を別々にコピーして2回に分けて貼ってください。</b>` : ''}</p>`,
+    S.src ? [['all', 'まとめてコピー', 'primary'], ['close', '閉じる']] : [['all', 'まとめてコピー', over ? '' : 'primary'], ['head', '①ショーのリンクだけ', over ? 'primary' : ''], ['names', '②名前のリンクだけ'], ['close', '閉じる']]);
+  if (v === 'all') copyText(text, `${ps.length}人分のリンクをコピーしました`);
+  else if (v === 'head') copyText(head, '①ショーのリンクをコピーしました。続けて②もコピーして貼ってください');
+  else if (v === 'names') copyText(names, `②${ps.length}人分の名前のリンクをコピーしました`);
+}
+
+/* ---------- 大会のルール（プリセット） ---------- */
+// 数字は 2025〜2026年度の要項で確かめたもの。要項は毎年変わるので、選んだあとで直せるようにする
+const RULE_SRC = {
+  ajba:[['全日本マーチングコンテスト 実施規定（2026年度）', 'https://www.ajba.or.jp/00ajba/07_pdf/kitei_naiki2026/4_marching.pdf'], ['規定課題（2026年度）', 'https://www.ajba.or.jp/00ajba/07_pdf/kitei_naiki2026/6_2026march_kadai.pdf']],
+  jmba:[['第54回マーチングバンド全国大会 実施要項（2026）', 'https://dwgkpr9vzw3bh.cloudfront.net/jma/54MChampionships/1787554025080157100.pdf'], ['第48回マーチングバンド関西大会 基本実施要項（2026）', 'https://jma-kansai.com/wp-content/uploads/2026/06/dc2c6a186591b11628f2bc4efccd41fa.pdf']],
+  stage:[['第25回マーチングステージ全国大会 実施要項', 'https://dwgkpr9vzw3bh.cloudfront.net/jma/25stage/1788924367022263700.pdf']],
+};
+const JMBA_ES = [[1, 40, '小編成'], [41, 100, '大編成']], JMBA_HS = [[1, 40, '小編成'], [41, 80, '中編成'], [81, 150, '大編成']];
+const JMBA_NOTES = ['計時は、入場の合図のあと、だれか（人・楽器・器物）が最初に入場ラインを越えたときから、全員と楽器・器物が見なし退場ライン（30mの側面ライン）を越えたときまで', '入場を始めてから1分間は演奏・演技を始められません（審判の白旗で合図）', '正面演技ラインより前、側面演技ラインより外は使えません（違反1回につき1点減点）。前2.5m・左右7.5m・後ろ5mは県の要項の記述で、全国のフロア図で確かめてください', '電源が要る電子楽器・重い鍵盤楽器は使えません。施設の電源は使えず、乾電池・モバイルバッテリーは可', '器物は 1m80cm×1m20cm×1m50cm 以内。乗って演奏するなら高さ1m20cmまで。器物どうしを布でつなぐのは禁止', '火気・ガス・液体・固形燃料、乗り物、ドローン、動物は使えません。特殊効果は事前に説明書を出します', '登録引率者は5名まで・搬入搬出補助員は10名まで（演技中の補助は禁止）'];
+const RULE_PRESETS = {
+  ajba:{ name:'全日本吹奏楽連盟：全日本マーチングコンテスト（中学生の部・高等学校以上の部）', short:'全日本マーチングコンテスト', src:'ajba',
+    limit:360, timeIn:'show', over:'dq', io:60, wait:0, entry:30, exit:30, pMin:0, pMax:80, grp:null, dmIn:false, cond:0, dm:1, fw:30, fd:30, ext:[5, 5, 5, 5], extWarn:true, pit:true, tasks:true,
+    notes:['出演時間（演奏・演技の始めから終わりまで）6分以内。超えると失格（審査の対象外）', '入退場は合計1分以内で、安全に速やかに', '演技エリアは 30m×30m が基本。はみ出しは入退場口側をのぞいて5m程度まで。中に20mライン（四角形）とセンターラインがあります', '80名以内（ドラムメジャーは含まない・ドラムメジャーは1名）。指揮者は置いてもよい（80名に入るかは要項で確かめてください）', '電子楽器（エレキベースを含む）・ピアノ・チェレスタ・ハープは使えません。大道具・ピット楽器も使えません', 'メジャーバトン・フラッグの放り投げは禁止', '規定課題（2026年度）：①3列以上の隊列で四角形ライン（20mライン）を一周、②センターラインで180度の方向転換（各列Uターン）、③足踏み演奏（マークタイム）を連続32歩以上。行進は連続して、隊列全体が止まらないこと'] },
+  ajba_new:{ name:'全日本吹奏楽連盟：県大会のニューカマー部門など（5分以内の例）', short:'ニューカマー部門（例）', src:'ajba',
+    limit:300, timeIn:'show', over:'dq', io:60, wait:0, entry:30, exit:30, pMin:0, pMax:80, grp:null, dmIn:false, cond:0, dm:0, fw:30, fd:30, ext:[5, 5, 5, 5], extWarn:true, pit:true, tasks:false,
+    notes:['県大会の独自の部門（ニューカマー部門・フリー部門・オープン参加など）は、時間・人数・規定課題が県ごとに違います。出場する県の要項で数字を直してください（例：長野県のニューカマー部門は5分以内）'] },
+  jmba_es:{ name:'日本マーチングバンド協会：全国大会・地区大会 小学生の部', short:'JMBA 小学生の部', src:'jmba',
+    limit:480, timeIn:'all', over:'pt5', io:0, wait:60, entry:75, exit:30, pMin:0, pMax:0, grp:JMBA_ES, dmIn:true, cond:0, dm:0, fw:30, fd:30, ext:[2.5, 5, 7.5, 7.5], extWarn:false, pit:false, tasks:false,
+    notes:['時間は入場から退場まで8分以内。5秒以上超えると1点減点、そのあと5秒ごとに1点減点', '人数は指揮者を含めて、小編成40名以内・大編成41〜100名。指揮者は2名まで', ...JMBA_NOTES] },
+  jmba_jh:{ name:'日本マーチングバンド協会：全国大会・地区大会 中学生の部', short:'JMBA 中学生の部', src:'jmba',
+    limit:480, timeIn:'all', over:'pt5', io:0, wait:60, entry:75, exit:30, pMin:0, pMax:0, grp:JMBA_ES, dmIn:true, cond:0, dm:0, fw:30, fd:30, ext:[2.5, 5, 7.5, 7.5], extWarn:false, pit:false, tasks:false,
+    notes:['時間は入場から退場まで8分以内。5秒以上超えると1点減点、そのあと5秒ごとに1点減点', '人数は指揮者を含めて、小編成40名以内・大編成41〜100名。指揮者は2名まで', ...JMBA_NOTES] },
+  jmba_hs:{ name:'日本マーチングバンド協会：全国大会・地区大会 高等学校の部', short:'JMBA 高等学校の部', src:'jmba',
+    limit:570, timeIn:'all', over:'pt5', io:0, wait:60, entry:75, exit:30, pMin:0, pMax:0, grp:JMBA_HS, dmIn:true, cond:0, dm:0, fw:30, fd:30, ext:[2.5, 5, 7.5, 7.5], extWarn:false, pit:false, tasks:false,
+    notes:['時間は入場から退場まで9分30秒以内。5秒以上超えると1点減点、そのあと5秒ごとに1点減点', '人数は指揮者を含めて、小編成40名以内・中編成41〜80名・大編成81〜150名。指揮者は2名まで', ...JMBA_NOTES] },
+  jmba_gen:{ name:'日本マーチングバンド協会：全国大会・地区大会 一般の部', short:'JMBA 一般の部', src:'jmba',
+    limit:570, timeIn:'all', over:'pt5', io:0, wait:60, entry:75, exit:30, pMin:0, pMax:0, grp:JMBA_HS, dmIn:true, cond:0, dm:0, fw:30, fd:30, ext:[2.5, 5, 7.5, 7.5], extWarn:false, pit:false, tasks:false,
+    notes:['時間は入場から退場まで9分30秒以内。5秒以上超えると1点減点、そのあと5秒ごとに1点減点', '人数は指揮者を含めて、小編成40名以内・中編成41〜80名・大編成81〜150名（未就学児はのぞく）。指揮者は2名まで', ...JMBA_NOTES] },
+  jmba_kinder:{ name:'日本マーチングバンド協会：関西大会 幼保の部', short:'JMBA 関西 幼保の部', src:'jmba',
+    limit:720, timeIn:'all', over:'pt5', io:0, wait:60, entry:75, exit:30, pMin:0, pMax:0, grp:null, dmIn:true, cond:0, dm:0, fw:30, fd:30, ext:[2.5, 5, 7.5, 7.5], extWarn:false, pit:false, tasks:false,
+    notes:['時間は入場から退場まで12分以内。編成と人数は自由', ...JMBA_NOTES] },
+  stage:{ name:'日本マーチングバンド協会：マーチングステージ全国大会（コンテスト部門）', short:'マーチングステージ', src:'stage',
+    limit:360, timeIn:'show', over:'pt5', io:0, wait:60, entry:60, exit:60, pMin:0, pMax:0, grp:[[4, 34, '小編成'], [35, 66, '大編成']], dmIn:true, cond:0, dm:0, fw:18, fd:18, ext:[0, 0, 0, 0], extWarn:false, pit:false, tasks:false,
+    notes:['ステージ中心の横18m×縦18mの正方形。4.5m間隔の印（ポイント）があります。エリアの外での演技は禁止（客席側のオーケストラピット側だけは安全に配慮すれば使える）', '演奏・演技は6分以内。入場してから1分は演奏・演技できません。退場は1分程度', '人数は指揮者を含めて、小編成4〜34名・大編成35〜66名。時間超過は5秒ごとに1点減点', '器物は 1.8m×1.2m×1.5m 以内'] },
+};
+const RULE_DEF = { preset:'', limit:0, timeIn:'show', over:'warn', io:0, wait:0, entry:0, exit:0, pMin:0, pMax:0, grp:null, dmIn:false, cond:0, dm:0, fw:0, fd:0, ext:[0, 0, 0, 0], extWarn:false, pit:false, tasks:false, done:{}, on:{} };
+const RULE_ITEMS = [['time', '演技の時間'], ['io', '入退場の時間'], ['wait', '入場後すぐは演奏できない'], ['people', '人数'], ['dm', 'ドラムメジャーの人数'], ['floor', '演技エリア（フロアの外）'], ['pit', 'ピット（据え置きの打楽器）を使わない'], ['tasks', '規定課題']];
+function normRules(r){
+  r = Object.assign({}, RULE_DEF, r && typeof r === 'object' ? r : {});
+  const n = (v, a, b) => clamp(Number.isFinite(+v) ? +v : 0, a, b);
+  r.preset = RULE_PRESETS[r.preset] ? r.preset : '';
+  r.limit = Math.round(n(r.limit, 0, 3600)); r.io = Math.round(n(r.io, 0, 600)); r.wait = Math.round(n(r.wait, 0, 600)); r.entry = Math.round(n(r.entry, 0, 600)); r.exit = Math.round(n(r.exit, 0, 600));
+  r.timeIn = r.timeIn === 'all' ? 'all' : 'show'; r.over = ['dq', 'pt5', 'warn'].includes(r.over) ? r.over : 'warn';
+  r.pMin = Math.round(n(r.pMin, 0, 999)); r.pMax = Math.round(n(r.pMax, 0, 999)); r.cond = Math.round(n(r.cond, 0, 9)); r.dm = Math.round(n(r.dm, 0, 9));
+  r.grp = Array.isArray(r.grp) ? r.grp.filter(g => Array.isArray(g) && g.length >= 3).map(g => [Math.round(+g[0] || 0), Math.round(+g[1] || 0), String(g[2]).slice(0, 12)]) : null; if (r.grp && !r.grp.length) r.grp = null;
+  r.dmIn = !!r.dmIn; r.extWarn = !!r.extWarn; r.pit = !!r.pit; r.tasks = !!r.tasks;
+  r.fw = n(r.fw, 0, 200); r.fd = n(r.fd, 0, 200); r.ext = (Array.isArray(r.ext) ? r.ext : [0, 0, 0, 0]).slice(0, 4).map(v => n(v, 0, 50)); while (r.ext.length < 4) r.ext.push(0);
+  r.done = r.done && typeof r.done === 'object' ? { sq:!!r.done.sq, ut:!!r.done.ut, mt:!!r.done.mt } : {};
+  // 前の版の「limit」「inside」から：時間とフロアの外
+  const on = r.on && typeof r.on === 'object' ? r.on : {};
+  r.on = {}; RULE_ITEMS.forEach(([k]) => { r.on[k] = on[k] != null ? !!on[k] : k === 'time' ? r.limit > 0 : k === 'floor' ? r.inside !== false : false; });
+  r.inside = r.on.floor;
+  return r;
+}
+function applyPreset(key){
+  const p = RULE_PRESETS[key];
+  pushHist();
+  if (!p){ S.rules = normRules({ limit:S.rules.limit, inside:S.rules.inside, on:S.rules.on }); S.rules.preset = ''; changed(true); toast('大会を「自分で決める」にしました'); return; }
+  const r = Object.assign({}, RULE_DEF, JSON.parse(JSON.stringify(p)), { preset:key, done:{} });
+  delete r.name; delete r.short; delete r.notes; delete r.src;
+  r.on = { time:true, io:!!p.io, wait:!!p.wait, people:!!(p.pMax || p.grp), dm:!!p.dm, floor:true, pit:!!p.pit, tasks:!!p.tasks };
+  S.rules = normRules(r); changed(true);
+  toast(`「${p.short}」のルールにしました。数字は${p.src === 'ajba' ? '2026年度' : '2026年'}の要項のものです。出場する大会の今年の要項で確かめてください`);
+}
+// 演技エリア（フロアの中心から）。ルールで決めていなければ、画面のフロアの大きさ
+function ruleArea(){
+  const r = S.rules; if (!r || !r.fw || !r.fd) return null;
+  const [f, b, l, rt] = r.ext; return { core:[-r.fw / 2, r.fw / 2, -r.fd / 2, r.fd / 2], ok:[-r.fw / 2 - l, r.fw / 2 + rt, -r.fd / 2 - f, r.fd / 2 + b], warn:r.extWarn };
+}
+const inRect = (q, R) => q[0] >= R[0] - 1e-6 && q[0] <= R[1] + 1e-6 && q[1] >= R[2] - 1e-6 && q[1] <= R[3] + 1e-6;
+// 0：中、1：はみ出し（注意）、2：外
+function floorState(q){
+  const A = ruleArea();
+  if (!A){ const [hx, hy] = fieldHalf(); return Math.abs(q[0]) <= hx + 1e-6 && Math.abs(q[1]) <= hy + 1e-6 ? 0 : 2; }
+  if (inRect(q, A.core)) return 0; if (inRect(q, A.ok)) return A.warn ? 1 : 0; return 2;
+}
+function peopleCount(){ const r = S.rules; return S.performers.filter(p => !isDM(p)).length + (r.dmIn ? countDM() : 0) + (r.cond || 0); }
+function overText(o){ const r = S.rules; return r.over === 'dq' ? '失格（審査の対象外）になります' : r.over === 'pt5' ? (o >= 5 ? `${Math.floor(o / 5)}点減点の見込み` : '5秒未満なので減点はありません（ぎりぎり）') : '短くしてください'; }
+const srcLinks = k => (RULE_SRC[k] || []).map(([t, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>`).join('・');
+function rulesConfHTML(){
+  const r = S.rules, P = RULE_PRESETS[r.preset], ck = k => `<input type="checkbox" data-ron="${k}" ${r.on[k] ? 'checked' : ''}>`, num = (id, v, w, st) => `<input type="number" id="${id}" value="${v}" min="0" step="${st || 1}" style="width:${w || 4.2}em">`;
+  const groups = [['', '自分で決める'], ['ajba', RULE_PRESETS.ajba.name], ['ajba_new', RULE_PRESETS.ajba_new.name], ['jmba_es', RULE_PRESETS.jmba_es.name], ['jmba_jh', RULE_PRESETS.jmba_jh.name], ['jmba_hs', RULE_PRESETS.jmba_hs.name], ['jmba_gen', RULE_PRESETS.jmba_gen.name], ['jmba_kinder', RULE_PRESETS.jmba_kinder.name], ['stage', RULE_PRESETS.stage.name]];
+  const n = peopleCount();
+  return `<h2>大会のルール</h2>
+  <div class="row"><select id="rlPreset" aria-label="大会" style="max-width:100%">${groups.map(([k, t]) => `<option value="${k}" ${r.preset === k ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div>
+  <p class="note">大会を選ぶと、その要項の数字が入ります（下で直せます）。調べる項目は一つずつ選べます。要項は毎年変わるので、出場する大会の今年の要項で必ず確かめてください。${P ? `<br>出典：${srcLinks(P.src)}` : ''}</p>
+  <div class="rulebox">
+    <label class="row">${ck('time')}<b>演技の時間</b></label>
+    <div class="rule-sub"><div class="row"><input id="cfLimit" type="text" inputmode="numeric" value="${r.limit ? fmtMS(r.limit) : ''}" placeholder="例 6:00" style="width:5em"><span class="note">以内・計る範囲</span><select id="rlTimeIn"><option value="show" ${r.timeIn === 'show' ? 'selected' : ''}>演奏・演技の始めから終わりまで</option><option value="all" ${r.timeIn === 'all' ? 'selected' : ''}>入場から退場まで</option></select></div>
+      <div class="row"><span class="note">超えたとき</span><select id="rlOver"><option value="dq" ${r.over === 'dq' ? 'selected' : ''}>失格</option><option value="pt5" ${r.over === 'pt5' ? 'selected' : ''}>5秒ごとに1点減点</option><option value="warn" ${r.over === 'warn' ? 'selected' : ''}>注意だけ</option></select></div>
+      <div class="row"><span class="note">見込み：入場から演奏開始まで</span>${num('rlEntry', r.entry)}<span class="note">秒・演奏の終わりから退場まで</span>${num('rlExit', r.exit)}<span class="note">秒</span></div></div>
+    <label class="row">${ck('io')}<b>入退場の時間</b></label>
+    <div class="rule-sub row"><span class="note">入場＋退場の合計</span>${num('rlIo', r.io)}<span class="note">秒以内</span></div>
+    <label class="row">${ck('wait')}<b>入場してすぐは演奏できない</b></label>
+    <div class="rule-sub row"><span class="note">入場してから</span>${num('rlWait', r.wait)}<span class="note">秒は演奏・演技しない</span></div>
+    <label class="row">${ck('people')}<b>人数</b></label>
+    <div class="rule-sub">${r.grp ? `<p class="note">${r.grp.map(g => `${esc(g[2])} ${g[0]}〜${g[1]}名`).join('・')}</p>` : `<div class="row">${num('rlPMin', r.pMin)}<span class="note">〜</span>${num('rlPMax', r.pMax)}<span class="note">名（0は決めない）</span></div>`}
+      <label class="row"><input type="checkbox" id="rlDmIn" ${r.dmIn ? 'checked' : ''}>ドラムメジャーも人数に数える</label>
+      <div class="row"><span class="note">隊員のほかに指揮者</span>${num('rlCond', r.cond)}<span class="note">人を数える（今の数え方で ${n}人）</span></div></div>
+    <label class="row">${ck('dm')}<b>ドラムメジャーの人数</b></label>
+    <div class="rule-sub row">${num('rlDm', r.dm)}<span class="note">名（今 ${countDM()}人）</span></div>
+    <label class="row">${ck('floor')}<b>演技エリア（フロアの外に出ないか）</b></label>
+    <div class="rule-sub"><div class="row"><span class="note">横</span>${num('rlFw', r.fw, 4, 0.5)}<span class="note">m × 縦</span>${num('rlFd', r.fd, 4, 0.5)}<span class="note">m（0ならフロアの大きさ）</span></div>
+      <div class="row"><span class="note">外に出てよい幅：前</span><input type="number" data-rext="0" value="${r.ext[0]}" min="0" step="0.5" style="width:3.6em"><span class="note">後ろ</span><input type="number" data-rext="1" value="${r.ext[1]}" min="0" step="0.5" style="width:3.6em"><span class="note">左</span><input type="number" data-rext="2" value="${r.ext[2]}" min="0" step="0.5" style="width:3.6em"><span class="note">右</span><input type="number" data-rext="3" value="${r.ext[3]}" min="0" step="0.5" style="width:3.6em"><span class="note">m</span></div>
+      <label class="row"><input type="checkbox" id="rlExtWarn" ${r.extWarn ? 'checked' : ''}>外に出てよい幅に入ったら「はみ出し」として注意する</label></div>
+    <label class="row">${ck('pit')}<b>ピット（据え置きの打楽器）を使わない</b></label>
+    <label class="row">${ck('tasks')}<b>規定課題（全日本マーチングコンテスト 2026年度）</b></label>
+  </div>
+  <p class="note">今の通しの長さ（演技）は ${fmtTime(secAt(total()))}。結果は「セット」タブの下に出ます。外に出る人はフィールドで赤い点線の輪、はみ出しはオレンジの輪になります。</p>`;
+}
+function drawRuleArea(c){
+  const r = S.rules; if (!r || !r.on || !r.on.floor || ui.offscreen) return; const A = ruleArea(); if (!A) return;
+  const same = (a, b) => a.every((v, k) => Math.abs(v - b[k]) < 1e-6), [hx, hy] = fieldHalf();
+  c.save(); c.setLineDash([7, 5]); c.lineWidth = 1.6;
+  if (!same(A.ok, A.core)){ const R = rectS(A.ok[0], A.ok[2], A.ok[1], A.ok[3]); c.strokeStyle = A.warn ? 'rgba(255,140,0,.9)' : 'rgba(230,57,58,.9)'; c.strokeRect(R[0], R[1], R[2], R[3]);
+    c.font = `600 10px ${cssSans}`; c.fillStyle = c.strokeStyle; c.textAlign = 'left'; c.textBaseline = 'bottom'; c.fillText(A.warn ? 'はみ出してよい範囲' : '演技ライン', R[0] + 4, R[1] - 2); }
+  if (!same(A.core, [-hx, hx, -hy, hy])){ const R = rectS(A.core[0], A.core[2], A.core[1], A.core[3]); c.strokeStyle = 'rgba(230,57,58,.75)'; c.strokeRect(R[0], R[1], R[2], R[3]); }
+  c.restore();
+}
+// コンテのページのQRコード：このセットを開く
+function conteQRurl(i, full){
+  const base = location.origin + location.pathname;
+  if (S.src) return { url:showLink('&set=' + i), cap:'スマホで読むと、このセットが開きます（いつも最新の版）' };
+  if (full && (full + '&set=' + i).length <= QR_MAX) return { url:full + '&set=' + i, cap:'スマホで読むと、このショーのこのセットが開きます' };
+  return { url:`${base}?set=${i}`, cap:'先に共有リンクでショーを開いておくと、このセットが出ます' };
+}
+// 保存・共有の画面の追加分
+function renderFileExtras(){
+  const el = $('#fileExtras'); if (!el) return;
+  const n = ui.audios.filter(A => A && A.file).length, nu = S.songs.filter(g => g.url).length, canShareFiles = !!(navigator.canShare && window.File);
+  el.innerHTML = `<h3 class="shh">音源込みで渡す</h3>
+  <div class="row"><button data-act="packSave" class="dl-only" ${n ? '' : 'disabled'}>音源込みのファイルを保存</button>${canShareFiles ? `<button data-act="packShare" ${n ? '' : 'disabled'}>音源込みで送る…</button>` : ''}</div>
+  <p class="note">共有リンク・QRコード・ふつうのファイルには、音源（音声ファイル）は入りません（大きすぎるため）。音源込みのファイルなら、受け取った人も「ファイルを開く」で音源ごと開けます（この端末で読み込んだ音源 ${n}曲${nu ? `・URLを書いた曲 ${nu}曲` : ''}）。リンクやQRで開いた人にも聞いてもらうときは、「音源」タブで曲ごとに音源のURLを書いておきます。</p>
+  ${srcHTML()}
+  <h3 class="shh link-only">隊員に配る</h3>
+  <div class="row link-only"><button data-act="linkList">全員の自分用リンクを一覧でコピー</button></div>
+  <p class="note link-only">名前つきのリンクの一覧を作ります。LINE のグループなどに貼ると、一人ひとりが自分のドットシートを開けます。</p>`;
+}
+
 /* ---------- v9 のボタン・入力 ---------- */
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (!b) return; const a = b.dataset.act;
@@ -6047,15 +6691,15 @@ document.addEventListener('click', e => {
 });
 pane.addEventListener('change', e => {
   const t = e.target;
-  if (t.id === 'setNote'){ const s = S.sets[ui.cur], v = cleanNote(t.value, NOTE_MAX); if ((s.note || '') === v) return; pushHist(); if (v) s.note = v; else delete s.note; changed(true); toast(v ? `「${s.name}」のメモを保存しました` : 'メモを消しました'); return; }
-  if (t.id === 'pnNote'){ const id = ui.focus; if (!id) return; const v = cleanNote(t.value, PNOTE_MAX); if (personalNote(ui.cur, id) === v) return; pushHist(); setPersonalNote(ui.cur, id, v); changed(true); toast(v ? `${labelOf(id)}の「${S.sets[ui.cur].name}」のメモを保存しました` : 'メモを消しました'); return; }
+  if (t.id === 'setNote'){ const s = S.sets[noteIdx()], v = cleanNote(t.value, NOTE_MAX); if ((s.note || '') === v) return; pushHist(); if (v) s.note = v; else delete s.note; changed(true); toast(v ? `「${s.name}」のメモを保存しました` : 'メモを消しました'); return; }
+  if (t.id === 'pnNote'){ const id = ui.focus, j = pnIdx(); if (!id) return; const v = cleanNote(t.value, PNOTE_MAX); if (personalNote(j, id) === v) return; pushHist(); setPersonalNote(j, id, v); changed(true); toast(v ? `${labelOf(id)}の「${S.sets[j].name}」のメモを保存しました` : 'メモを消しました'); return; }
   if (t.id === 'pNote'){ const p = S.performers.find(x => x.id === ui.focus); if (!p) return; const v = cleanNote(t.value, PNOTE_MAX); if ((p.note || '') === v) return; pushHist(); if (v) p.note = v; else delete p.note; changed(true); toast(v ? `${p.label}のメモを保存しました` : 'メモを消しました'); return; }
   if (t.id === 'posFmt'){ ui.posFmt = t.value; pracSave(); renderSide(); return; }
   if (t.id === 'meChk'){ const p = S.performers.find(x => x.id === ui.focus); setMe(t.checked && p ? p.label : ''); renderSide(); render(); if (t.checked && p) toast(`この端末では${p.label}を「自分」にしました。開くたびに印が付きます`); return; }
   if (t.id === 'asgSec'){ ui.asgSec = t.checked; return; }
   if (t.id === 'asgFwd'){ ui.asgFwd = t.checked; return; }
   if (t.id === 'asgEven'){ ui.asgEven = t.value === '1'; return; }
-  if (t.id === 'cfLimit'){ const v = parseMS(t.value); if (!Number.isFinite(v)){ toast('時間は「6:00」か「360」（秒）のように入れてください'); renderSide(); return; } pushHist(); S.rules.limit = clamp(v, 0, 3600); changed(true); toast(S.rules.limit ? `演技の時間の制限を${fmtMS(S.rules.limit)}にしました` : '時間の制限を外しました'); return; }
+  if (t.id === 'cfLimit'){ const v = parseMS(t.value); if (!Number.isFinite(v)){ toast('時間は「6:00」か「360」（秒）のように入れてください'); renderSide(); return; } pushHist(); S.rules.limit = clamp(v, 0, 3600); S.rules.on.time = S.rules.limit > 0; changed(true); toast(S.rules.limit ? `演技の時間の制限を${fmtMS(S.rules.limit)}にしました` : '時間の制限を外しました'); return; }
   if (t.id === 'cfInside'){ pushHist(); S.rules.inside = t.checked; changed(true); return; }
 });
 pane.addEventListener('toggle', e => { if (e.target.id === 'toolBox') ui.toolOpen = e.target.open; }, true);
@@ -6097,11 +6741,15 @@ function startupV9(hadSaved){
   try { ui.me = localStorage.getItem(LSKEY + '.me') || ''; } catch (e) { ui.me = ''; }
   $('#appVer').textContent = 'v' + APP_VERSION;
   renderStamp(); renderPracUI(); checkNudge(); setInterval(checkNudge, 10 * 60 * 1000);
-  maybeSnap('day');
+  maybeSnap('day'); audRestore();
   let seen = ''; try { seen = localStorage.getItem(LSKEY + '.seen') || ''; localStorage.setItem(LSKEY + '.seen', APP_VERSION); } catch (e) {}
-  const hasLink = /[#&]d=/.test(location.hash), q = meOf(location.search);
-  if (q && !hasLink) setTimeout(() => focusMe(q), 300);
-  if (hasLink || q || /[?&]test\b/.test(location.search)) return;
+  const qs = new URLSearchParams(location.search), hasLink = /[#&]d=/.test(location.hash), hasShow = !!qs.get('show'), q = meOf(location.search), qset = qs.get('set');
+  if (hasShow) setTimeout(openFromQuery, 0);
+  else {
+    if (q && !hasLink) setTimeout(() => focusMe(q), 300);
+    if (qset != null && !hasLink && S.sets[+qset]) setTimeout(() => goSet(+qset), 200);
+  }
+  if (hasLink || hasShow || q || qset != null || /[?&]test\b/.test(location.search)) return;
   if (!hadSaved && !seen) setTimeout(welcomeShow, 400);
   else if (seen !== APP_VERSION) setTimeout(() => showNews(true), 700);
 }
@@ -6112,6 +6760,77 @@ if (/[?&]test\b/.test(location.search)) window.__db = {
   ruleCheck, parseMS, buildContePrint, buildSheetPrint, doPrint, loopRange, playRange, viewRange, stepCount, setSpeed, setLoop, setFlip, setBig, w2s, s2w, fit, openShared, plainShow,
   libLoad, libSave, nnInfo, gapSummary, countNo, coachStart, coachGo, welcomeShow, focusMe, openTab, segCross, ask, qrSVG, setMode, render, renderSide, libSig, fmtStamp, APP_VERSION,
 };
+
+/* ---------- v10 のボタン・入力 ---------- */
+function rulesPack(r){
+  if (!r) return null; const o = {};
+  ['preset', 'timeIn', 'over', 'io', 'wait', 'entry', 'exit', 'pMin', 'pMax', 'grp', 'dmIn', 'cond', 'dm', 'fw', 'fd', 'ext', 'extWarn', 'pit', 'tasks'].forEach(k => { if (JSON.stringify(r[k]) !== JSON.stringify(RULE_DEF[k])) o[k] = r[k]; });
+  const legacy = { time:r.limit > 0, floor:r.on && r.on.floor != null ? !!r.on.floor : r.inside !== false };   // フロアは c.fi で伝わる
+  if (r.on && RULE_ITEMS.some(([k]) => !!r.on[k] !== !!legacy[k])) o.on = Object.fromEntries(RULE_ITEMS.map(([k]) => [k, r.on[k] ? 1 : 0]));
+  const dn = r.done || {}; if (dn.sq || dn.ut || dn.mt) o.done = { sq:dn.sq ? 1 : 0, ut:dn.ut ? 1 : 0, mt:dn.mt ? 1 : 0 };
+  return Object.keys(o).length ? o : null;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b) return; const a = b.dataset.act;
+  if (a === 'bellFront'){ bellFront(b.dataset.v === '1'); }
+  else if (a === 'noteSel'){ ui.noteSet = +b.dataset.i; ui.noteFor = ui.cur; renderSide(); const t = $('#setNote'); if (t) t.focus(); }
+  else if (a === 'pnSel'){ ui.pnSet = +b.dataset.i; ui.pnFor = ui.cur; renderSide(); }
+  else if (a === 'posApply'){ posApply(b.dataset.id, b.dataset.x, b.dataset.y); }
+  else if (a === 'spreadSel'){ spreadSel(); }
+  else if (a === 'spreadFix'){ spreadFix(); }
+  else if (a === 'printPart'){
+    const r = document.querySelector('input[name="ppWho"]:checked'), f = $('#psFmt'); if (f){ ui.posFmt = f.value; pracSave(); }
+    $('#printModal').hidden = true; doPrint('part', { who:r ? r.value : 'sec', fmt:ui.posFmt, mini:!!($('#ppMini') && $('#ppMini').checked) });
+  }
+  else if (a === 'linkList'){ linkList(); }
+  else if (a === 'srcSave'){ srcSave(); }
+  else if (a === 'srcCheck'){ srcCheck(); }
+  else if (a === 'srcCopy'){ copyText(showLink(), 'いつも最新の版が開く短いリンクをコピーしました'); }
+  else if (a === 'srcQR'){ const u = showLink(); ask('サイトに置いたショーのQRコード', `<div class="qrbox">${qrSVG(u)}</div><p class="note mono" style="word-break:break-all">${esc(u)}</p><p class="note">読み取ると、いつも最新の版のショーが開きます。</p>`, [['copy', 'リンクをコピー', 'primary'], ['close', '閉じる']]).then(v => { if (v === 'copy') copyText(u, 'リンクをコピーしました'); }); }
+  else if (a === 'srcOff'){ delete S.src; save(); ui.ver++; renderFileExtras(); toast('サイトに置いたショーの設定をやめました（置いたファイルはそのままです）'); }
+  else if (a === 'packSave'){ savePack(false); }
+  else if (a === 'packShare'){ savePack(true); }
+  else if (a === 'audStoreClear'){ if (!armed(b)) return; (async () => { try { const db = await audDB(); await new Promise((res, rej) => { const tx = db.transaction('a', 'readwrite'); tx.objectStore('a').clear(); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (x) {} ui.audios.forEach(A => { if (A) A.stored = false; }); toast('この端末に覚えていた音源を消しました（今開いている音源は、閉じるまで使えます）'); renderSide(); })(); }
+});
+$('#bBell').onclick = bellQuick;
+function onRuleInput(t){
+  const r = S.rules, num = v => Math.max(0, +v || 0);
+  if (t.id === 'rlPreset'){ applyPreset(t.value); return true; }
+  if (t.dataset.ron != null){ pushHist(); r.on[t.dataset.ron] = t.checked; if (t.dataset.ron === 'floor') r.inside = t.checked; S.rules = normRules(r); changed(true); return true; }
+  if (t.dataset.rtask != null){ pushHist(); r.done = r.done || {}; r.done[t.dataset.rtask] = t.checked; changed(true); return true; }
+  if (t.dataset.rext != null){ pushHist(); r.ext[+t.dataset.rext] = num(t.value); S.rules = normRules(r); changed(true); return true; }
+  const map = { rlTimeIn:['timeIn', v => v], rlOver:['over', v => v], rlEntry:['entry', num], rlExit:['exit', num], rlIo:['io', num], rlWait:['wait', num], rlPMin:['pMin', num], rlPMax:['pMax', num], rlCond:['cond', num], rlDm:['dm', num], rlFw:['fw', num], rlFd:['fd', num] };
+  if (map[t.id]){ pushHist(); r[map[t.id][0]] = map[t.id][1](t.value); S.rules = normRules(r); changed(true); return true; }
+  if (t.id === 'rlDmIn' || t.id === 'rlExtWarn'){ pushHist(); r[t.id === 'rlDmIn' ? 'dmIn' : 'extWarn'] = t.checked; S.rules = normRules(r); changed(true); return true; }
+  return false;
+}
+function onAudioOpt(t){
+  if (t.id === 'clickAccent'){ ui.clickAccent = t.checked; pracSave(); return true; }
+  if (t.id === 'clickSub'){ ui.clickSub = t.checked; pracSave(); if (ui.playing) ui.nextClick = firstClick(ui.t); return true; }
+  if (t.id === 'pracCiMusic'){ ui.ciMusic = t.checked; pracSave(); return true; }
+  return false;
+}
+pane.addEventListener('change', e => {
+  const t = e.target;
+  if (onRuleInput(t) || onAudioOpt(t)) return;
+  if (t.id === 'noteSetSel'){ ui.noteSet = +t.value; ui.noteFor = ui.cur; renderSide(); return; }
+  if (t.id === 'pnSetSel'){ ui.pnSet = +t.value; ui.pnFor = ui.cur; renderSide(); return; }
+  if (t.dataset.aurl != null){
+    const k = +t.dataset.aurl, g = S.songs[k], v = t.value.trim(); if (!g || (g.url || '') === v) return;
+    pushHist(); if (v) g.url = v; else delete g.url; changed(true);
+    const A = ui.audios[k]; if (v && (!A || A.remote)){ setAudioObj(k, audFromURL(v, k)); toast(`「${g.name}」の音源をURLから読み込みます。共有リンクやQRで開いた人も、ここから聞けます`); }
+    else if (!v && A && A.remote) setAudioObj(k, null);
+    renderSide(); return;
+  }
+});
+['input', 'change'].forEach(ev => document.addEventListener(ev, e => {
+  const t = e.target; if (!t || !t.id) return;
+  if (t.id === 'volMusic') setMusicVol(t.value); else if (t.id === 'volClick') setClickVol(t.value);
+}));
+$('#pracModal').addEventListener('change', e => { onAudioOpt(e.target); });
+pane.addEventListener('toggle', e => { if (e.target.id === 'noteList') ui.noteListOpen = e.target.open; }, true);
+if (window.__db) Object.assign(window.__db, { bellFront, isBellFront, noteIdx, posOptions, arrivalClose, strideSpread, spreadFix, buildPartPrint, linkList, applyPreset, normRules, rulesPack, floorState, peopleCount,
+  audSave, audLoad, audRestore, setAudioObj, audFromURL, normAudioURL, makePack, openPack, songKey, clickAccentAt, firstClick, nextClickAfter, conteQRurl, fetchShow, openFromQuery, showLink, RULE_PRESETS, collFind, pairOptions });
 
 /* ---------- 起動 ---------- */
 cssSans = getComputedStyle(document.documentElement).getPropertyValue('--sans').trim() || 'sans-serif';

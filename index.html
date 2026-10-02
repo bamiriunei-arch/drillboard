@@ -2273,7 +2273,8 @@ function tick(){
   setCurFromT();
   render(); requestAnimationFrame(tick);
 }
-function highlightSet(){ document.querySelectorAll('.set-row[data-set]').forEach(r => r.classList.toggle('on', +r.dataset.set === ui.cur)); }
+function highlightSet(){ document.querySelectorAll('.set-row[data-set]').forEach(r => r.classList.toggle('on', +r.dataset.set === ui.cur));
+  const sb = document.querySelector('[data-act="songSplit"]'); if (sb && S.sets[ui.cur]){ sb.textContent = `「${S.sets[ui.cur].name}」から次の曲にする`; sb.disabled = songSets(curSong())[0] === ui.cur; } }
 $('#bPlay').onclick = play;
 $('#bPrev').onclick = () => {
   const T = tl(), first = songSets(curSong())[0];
@@ -2421,7 +2422,20 @@ function conteFrameFit(L, aspect){
   if (!best) return null;
   // 縦の線 x = c0 + k*y と横の線 y = c0 + k*x の交点
   const X = (v, hz) => { const y = (hz.c0 + hz.k * v.c0) / (1 - hz.k * v.k), x = v.c0 + v.k * y; return [x / sc, y / sc]; };
-  return { img:[X(best.l, best.t), X(best.r, best.t), X(best.r, best.b), X(best.l, best.b)], err:best.err, area:(best.r.at(cy) - best.l.at(cy)) * (best.b.at(cx) - best.t.at(cx)) / (w * h) };
+  return { img:[X(best.l, best.t), X(best.r, best.t), X(best.r, best.b), X(best.l, best.b)], err:best.err, area:(best.r.at(cy) - best.l.at(cy)) * (best.b.at(cx) - best.t.at(cx)) / (w * h),
+    side:[best.t.at(cx) / sc, best.r.at(cy) / sc, best.b.at(cx) / sc, best.l.at(cy) / sc] };
+}
+// 何ページもあるとき：多くのページで見つかった外枠の位置と大きさに合わせて、そのページの太い線から外枠を選び直す
+// （外枠の線が楽譜などで隠れていたり、ほかの四角のほうが大きかったりしても、ずれないように）。見つからない辺は向かいの辺から大きさで決める
+function conteFrameNear(L, side){
+  const { V, Hh, sc, w, h } = L, cx = w / 2, cy = h / 2, [T, R, B, Lf] = side.map(v => v * sc), W = R - Lf, Hs = B - T, tol = 0.035;
+  const near = (arr, pos, size, at) => { let best = null, bd = size * tol; arr.forEach(l => { const d = Math.abs(l.at(at) - pos); if (d < bd){ bd = d; best = l; } }); return best; };
+  let t = near(Hh, T, Hs, cx), b = near(Hh, B, Hs, cx), l = near(V, Lf, W, cy), r = near(V, R, W, cy);
+  const shift = (o, d) => ({ k:o.k, c0:o.c0 + d, at:(a => o.at(a) + d) }), flat = c => ({ k:0, c0:c, at:(() => c) });
+  if (!t && b) t = shift(b, -Hs); if (!b && t) b = shift(t, Hs); if (!t){ t = flat(T); b = flat(B); }
+  if (!l && r) l = shift(r, -W); if (!r && l) r = shift(l, W); if (!l){ l = flat(Lf); r = flat(R); }
+  const X = (v, hz) => { const y = (hz.c0 + hz.k * v.c0) / (1 - hz.k * v.k), x = v.c0 + v.k * y; return [x / sc, y / sc]; };
+  return [X(l, t), X(r, t), X(r, b), X(l, b)];
 }
 // 外枠が見つからないとき：画像の中央に、フィールドの縦横比で大きめに置く
 function conteDefaultImg(W0, H0){
@@ -2508,7 +2522,7 @@ async function conteImport(files){
   const made = []; let failed = false;
   const onPage = async (cvs, name) => {
     const L = conteFrameLines(cvs), [hx, hy] = fieldHalf();
-    const fits = { cur:conteFrameFit(L, hx / hy), sq:conteFrameFit(L, 1), fb:conteFrameFit(L, FB_ASPECT) };
+    const fits = { cur:conteFrameFit(L, hx / hy), sq:conteFrameFit(L, 1), fb:conteFrameFit(L, FB_ASPECT), L };
     const th = canvasOf(120, 120 * cvs.height / cvs.width); th.getContext('2d').drawImage(cvs, 0, 0, th.width, th.height);
     made.push({ name, blob:await blobOf(cvs), w:cvs.width, h:cvs.height, fits, thumb:th.toDataURL('image/jpeg', 0.7), gray:null, set:-1 });
     cvs.width = cvs.height = 1;
@@ -2524,11 +2538,19 @@ async function conteImport(files){
   const vc = votes.cur, vs = votes.sq, vf = votes.fb;
   let key = 'cur';
   if (Math.max(vs, vf) > vc){
-    key = vs >= vf ? 'sq' : 'fb'; const t = key === 'sq' ? (isSqT(S.field.type) ? S.field.type : 'national') : 'football';
+    key = vs >= vf ? 'sq' : 'fb'; const t = key === 'sq' ? (isSqT(S.field.type) ? S.field.type : 'square') : 'football';
     if (t !== S.field.type){ switchField(t); fieldMsg = `コンテに合わせて、フィールドを「${$('#fieldType').querySelector(`option[value="${t}"]`).textContent}」にしました。`; }
   }
   // 3) 外枠が見つかったページだけを、今のセットから順にセットに当てる（表紙・説明のページは当てない）
   made.forEach(p => { const f = p.fits[key]; p.auto = !!(f && f.err < 0.15); p.img = p.auto ? f.img : conteDefaultImg(p.w, p.h); p.world = conteFieldCorners(); });
+  // 外枠の位置・大きさ（同じ大きさのページが多いとき、その中央値）から外れたページは、その位置の近くの線で選び直す
+  const okP = made.filter(p => p.auto && p.fits[key].err < 0.04 && p.w === made[0].w && p.h === made[0].h);
+  if (okP.length >= 3){
+    const med = j => { const v = okP.map(p => p.fits[key].side[j]).sort((a, b) => a - b); return v[v.length >> 1]; }, side = [0, 1, 2, 3].map(med), W = side[1] - side[3], Hs = side[2] - side[0];
+    made.forEach(p => { if (!p.auto || p.w !== made[0].w || p.h !== made[0].h) return; const sd = p.fits[key].side;
+      if (Math.abs(sd[1] - sd[3] - W) > W * 0.03 || Math.abs(sd[2] - sd[0] - Hs) > Hs * 0.03 || Math.abs(sd[0] - side[0]) > Hs * 0.08 || Math.abs(sd[3] - side[3]) > W * 0.08) p.img = conteFrameNear(p.fits.L, side); });
+  }
+  made.forEach(p => { delete p.fits; });
   let use = made.filter(p => p.auto); const allManual = !use.length; if (allManual) use = made;
   const start = ui.cur; let added = 0;
   use.forEach((p, k) => {
@@ -2544,11 +2566,39 @@ async function conteImport(files){
   conte.pages = conte.pages.concat(made); conte.show = true;
   if (added || fieldMsg) changed(true); else { hist.pop(); renderSide(); render(); }
   const skip = made.length - use.length, unplaced = use.filter(p => p.set < 0).length;
-  toast(`コンテを${made.length}ページ読み込みました。${fieldMsg}${use.length - unplaced}ページを「${setLabel(start)}」から順にセットに当てました${added ? `（セットを${added}つ足しました）` : ''}。`
+  toast(`コンテを${made.length}ページ読み込みました。${fieldMsg}${use.length - unplaced}ページを「${setLabel(start)}」から順にセットに当てました${added ? `（セットを${added}個足しました）` : ''}。`
     + (skip ? `フィールドの枠がない${skip}ページ（表紙など）はセットに当てていません。` : '')
     + (unplaced ? `セットが足りない${unplaced}ページはセットに当てていません。` : '')
     + (allManual ? 'フィールドの外枠が見つからなかったので、「四隅をドラッグして合わせる」で合わせてください。' : '')
     + (failed ? '途中から読み込めなかったページがあります。' : ''));
+}
+// ページ k をセット v に当てる（v = -1 で当てない）。shift なら、後ろのページも続けて当て直す
+//   v ≥ 0：後ろのページ（セットに当てているもの）を v+1, v+2, … に。セットが足りなければ足す（「セットを足す」がオンのとき）
+//   v = -1：後ろのページを1つずつ前のセットに詰める
+function conteAssign(k, v){
+  const p = conte.pages[k]; if (!p) return; const old = p.set; if (old === v) return;
+  const later = conte.shift ? conte.pages.slice(k + 1).filter(q => q.set >= 0) : [];
+  let added = 0, moved = 0;
+  if (v >= 0){
+    p.set = v; let next = v + 1;
+    for (const q of later){
+      if (next >= S.sets.length){
+        if (!conte.add){ q.set = -1; moved++; continue; }
+        if (!added) pushHist(); const last = S.sets[S.sets.length - 1], sg = last.sg || 0;
+        S.sets.push({ name:'Set ' + (songSets(sg).length + 1), counts:8, hold:0, bpm:null, pos:JSON.parse(JSON.stringify(last.pos)), sg }); added++;
+      }
+      if (q.set !== next) moved++; q.set = next++;
+    }
+  } else {
+    p.set = -1; let s0 = old;
+    if (old >= 0) for (const q of later){ const t = q.set; q.set = s0; s0 = t; moved++; }
+  }
+  // 同じセットに2つのページが当たらないように（ほかのページは外す）
+  const mine = new Set([p, ...later]), taken = new Set([p, ...later].map(q => q.set).filter(x => x >= 0));
+  conte.pages.forEach(q => { if (!mine.has(q) && taken.has(q.set)) q.set = -1; });
+  if (added) changed(true);
+  if (v >= 0) goSet(v); else { renderSide(); render(); }
+  if (moved || added) toast(`「${p.name}」を${v >= 0 ? `「${setLabel(v)}」に当てました` : 'セットに当てないようにしました'}。後ろの${moved}ページも続けて当て直しました${added ? `（セットを${added}個足しました）` : ''}`);
 }
 // ページを破棄する。shift なら、後ろのページを1つずつ前のセットに詰める
 function conteDrop(k){
@@ -2805,7 +2855,7 @@ function conteHTML(){
   <p class="note"><b>直し方：</b>人違いの人を、本当の位置にいる人の上に重ねるように動かすと、2人が入れ替わります（コンテを下に敷いているセットだけ）。ピンクの点線の丸は、拾った点でまだ誰もいない所です。直したら「次のセットから後ろを拾う」で、そのあとのセットを推測し直せます。☆（ドラムメジャー）は動かしません。「元に戻す」で取り消せます。</p>
   <h2>ページ</h2>
   <p class="note">ページごとに、どのセットに当てるかを選べます。表紙や説明のページなど、いらないページは「破棄」で外せます。</p>
-  <label class="row"><input type="checkbox" id="conteShift" ${conte.shift ? 'checked' : ''}>破棄したら、後ろのページを1つずつ前のセットに詰める</label>
+  <label class="row"><input type="checkbox" id="conteShift" ${conte.shift ? 'checked' : ''}>ページのセットを変えたり破棄したりしたら、後ろのページも続けて当て直す</label>
   <div class="contelist">${(() => { const opts = S.sets.map((st, i) => `<option value="${i}">${esc((S.songs.length > 1 ? S.songs[st.sg || 0].name + ' ' : '') + st.name)}</option>`).join('');
     return conte.pages.map((p, k) => `<div class="contepage ${p === pg ? 'on' : ''}"><img src="${p.thumb}" alt=""><div class="grow"><div class="note">${esc(p.name)}${p.auto ? '' : '<b>（フィールドの枠なし）</b>'}</div>
     <select data-cpage="${k}" aria-label="${esc(p.name)}を当てるセット"><option value="-1">セットに当てない</option>${opts.replace(`value="${p.set}"`, `value="${p.set}" selected`)}</select></div>
@@ -3040,9 +3090,11 @@ function splitSong(i){
   S.songs.splice(g + 1, 0, { name:nm, bpm:src.bpm, meter:src.meter, off:0 });
   S.sets.forEach(st => { if ((st.sg || 0) > g) st.sg = (st.sg || 0) + 1; });
   ix.forEach(j => { if (j >= i){ S.sets[j].sg = g + 1; delete S.sets[j].at; } });   // 音源に合わせた位置は前の曲の音源のものなので外す
+  // 新しい曲は、選んだセットの隊形から始める（前のセットからの移動は、曲と曲の間で入れ替わる）
+  const mv = +S.sets[i].counts || 0; S.sets[i].counts = 0; delete S.sets[i].base;
   ui.audios.splice(g + 1, 0, null);
   ui.cur = i; ui.t = tl()[i].arrive; ui.freezeT = ui.t; changed(true);
-  toast(`「${S.sets[i].name}」から後ろを「${nm}」にしました。曲名・テンポは「${nm}」を開いて変えられます（元に戻すで取り消せます）`);
+  toast(`「${S.sets[i].name}」から後ろを「${nm}」にしました。「${nm}」は「${S.sets[i].name}」の隊形から始まります${mv ? `（前のセットからの${mv}カウントの移動はなくしました）` : ''}。曲名・テンポは「${nm}」を開いて変えられます（元に戻すで取り消せます）`);
 }
 // 曲 g のセットを、前の曲の続きにする
 function mergeSong(g){
@@ -3431,9 +3483,9 @@ pane.addEventListener('change', e => {
   if (t.id === 'conteIn'){ const fs = [...(t.files || [])]; t.value = ''; conteImport(fs); return; }
   if (t.id === 'conteAdd'){ conte.add = t.checked; return; }
   if (t.id === 'conteShift'){ conte.shift = t.checked; return; }
-  if (t.dataset.cpage != null){ const p = conte.pages[+t.dataset.cpage], v = +t.value; if (p){ if (v >= 0) conte.pages.forEach(q => { if (q !== p && q.set === v) q.set = -1; }); p.set = v; if (v >= 0) goSet(v); else { renderSide(); render(); } } return; }
+  if (t.dataset.cpage != null){ conteAssign(+t.dataset.cpage, +t.value); return; }
   if (t.id === 'conteShow'){ conte.show = t.checked; render(); return; }
-  if (t.id === 'contePage'){ const k = +t.value, old = contePageOf(ui.cur); if (old) old.set = -1; if (k >= 0 && conte.pages[k]) conte.pages[k].set = ui.cur; renderSide(); render(); return; }
+  if (t.id === 'contePage'){ const k = +t.value, old = contePageOf(ui.cur); if (k >= 0 && conte.pages[k]) conteAssign(k, ui.cur); else if (old){ conteAssign(conte.pages.indexOf(old), -1); } return; }
   if (t.id === 'splitAt'){ ui.splitAt = Math.round(+t.value || 0); return; }
   if (t.id === 'rotDegIn'){ ui.rotDeg = clamp(Math.round(+t.value || 90), 1, 360); renderSide(); return; }
   if (t.id === 'rosterSec'){ ui.rosterSec = t.value; const pv = $('#rosterPrev'); if (pv) pv.textContent = rosterPreview(); return; }

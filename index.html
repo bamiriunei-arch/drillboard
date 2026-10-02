@@ -915,7 +915,34 @@ async function readCode(text){
 let saveTimer = 0;
 function save(){ clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { localStorage.setItem(LSKEY, JSON.stringify(packShow(S))); } catch (e) {} }, 250); }
 function loadSaved(){ try { const raw = localStorage.getItem(LSKEY); if (raw) return normalize(unpackShow(JSON.parse(raw))); } catch (e) {} return null; }
-function pushHist(){ hist.push(JSON.stringify(S)); if (hist.length > 100) hist.shift(); redoStack.length = 0; }
+function pushHist(){ hist.push(JSON.stringify(S)); if (hist.length > 100) hist.shift(); redoStack.length = 0;
+  // 今のセットを直す前の位置を覚えておく（直したあと、後ろのセットにも反映するため）
+  const st = S.sets[ui.cur]; propSnap = st ? { i:ui.cur, set:st, n:S.sets.length, pos:Object.fromEntries(Object.entries(st.pos).map(([id, q]) => [id, [...q]])) } : null; }
+let propSnap = null;
+// セットを直したとき、後ろのセットにも反映する（ui.propMode）
+//   'same'：後ろのセットで、直す前と同じ位置にいる間は一緒に動かす（その人が動いたセットで止まる）
+//   'all' ：後ろのセット全部を、同じだけずらす
+function propagateEdit(){
+  const sn = propSnap; propSnap = null;
+  if (!sn || ui.noProp || !ui.propMode || ui.propMode === 'off' || S.sets[sn.i] !== sn.set || S.sets.length !== sn.n || sn.i >= S.sets.length - 1) return;
+  const cur = sn.set.pos, eq = (a, b) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6, r6 = v => Math.round(v * 1e6) / 1e6;
+  const moved = Object.keys(cur).filter(id => sn.pos[id] && !eq(cur[id], sn.pos[id])); if (!moved.length) return;
+  const touched = new Set(); let who = 0;
+  for (const id of moved){
+    const o = sn.pos[id], nw = cur[id], dx = nw[0] - o[0], dy = nw[1] - o[1]; let any = false;
+    for (let j = sn.i + 1; j < S.sets.length; j++){
+      const q = S.sets[j].pos[id]; if (!q) continue;
+      if (ui.propMode === 'same'){ if (!eq(q, o)) break; S.sets[j].pos[id] = [...nw]; }
+      else S.sets[j].pos[id] = [r6(q[0] + dx), r6(q[1] + dy)];
+      touched.add(j); any = true;
+    }
+    if (any) who++;
+  }
+  if (!touched.size) return;
+  applyAllFTL();
+  ui.propMsg = `後ろの${touched.size}セットにも反映しました（${who}人）`;
+  setTimeout(() => { if (ui.propMsg){ const m = ui.propMsg; ui.propMsg = ''; toast(m); } }, 0);
+}
 function undo(){ if (!hist.length) return toast('これ以上戻せません'); redoStack.push(JSON.stringify(S)); S = JSON.parse(hist.pop()); afterLoad(false); }
 function redo(){ if (!redoStack.length) return; hist.push(JSON.stringify(S)); S = JSON.parse(redoStack.pop()); afterLoad(false); }
 function afterLoad(refit){
@@ -930,7 +957,7 @@ function afterLoad(refit){
   // 曲名の並びなどで画面の高さが変わることがあるので、描き直したあとでもう一度全体を合わせる
   if (refit) requestAnimationFrame(() => requestAnimationFrame(() => { fit(); render(); }));
 }
-function changed(full){ ui.ver++; applyAllFTL(); save(); if (full){ renderTop(); renderSongbar(); renderSide(); renderTimeline(); } render(); }
+function changed(full){ ui.ver++; applyAllFTL(); propagateEdit(); save(); if (full){ renderTop(); renderSongbar(); renderSide(); renderTimeline(); } render(); }
 
 /* ---------- 時間 ---------- */
 function tl(){
@@ -2649,7 +2676,7 @@ function asgReverse(){
 // まだ割り当てていない人を、空いている点に動きから当てる
 async function asgRest(){
   const pg = contePageOf(ui.cur); if (!pg) return;
-  pushHist(); const r = await contePick(ui.cur, 0, pg.done || new Set()); ui.ver++; applyAllFTL(); changed(true);
+  pushHist(); ui.noProp = true; const r = await contePick(ui.cur, 0, pg.done || new Set()); ui.ver++; applyAllFTL(); changed(true); ui.noProp = false;
   if (r) toast(`まだ割り当てていない${r.placed + r.lost.length}人のうち${r.placed}人を空いている点に当てました（動きからの推測なので確かめてください）`);
 }
 // キャンバスの操作（割り当てモードのとき）。扱ったら true
@@ -2705,6 +2732,7 @@ function asgHTML(pg){
   const P = S.performers, done = pg && pg.done ? pg.done : new Set(), rest = P.filter(p => !done.has(p.id));
   let h = `<h2>記号で割り当て</h2>
   <div class="row"><button data-act="conteAsg" class="${conte.assign ? 'on' : ''}" ${pg ? '' : 'disabled'}>${conte.assign ? '割り当てを終わる' : '割り当てを始める'}</button><button data-act="conteRev" ${conte.assign && conte.last && conte.last.i === ui.cur ? '' : 'disabled'}>逆順にする（R）</button></div>`;
+  h += `<div class="row"><span class="note">直したとき後ろのセットに</span><select data-propmode aria-label="直したとき後ろのセットに反映するか"><option value="off" ${ui.propMode === 'same' || ui.propMode === 'all' ? '' : 'selected'}>反映しない</option><option value="same" ${ui.propMode === 'same' ? 'selected' : ''}>同じ位置の間は反映</option><option value="all" ${ui.propMode === 'all' ? 'selected' : ''}>後ろ全部を同じだけずらす</option></select></div>`;
   if (!conte.assign) return h + '<p class="note">コンテの点に、記号を見ながら人を割り当てます。点をクリックして記号（F1 など）を打つか、何人か選んでから点の列をなぞると、その順に並べます。</p>';
   if (pg && !pg.dots) return h + '<p class="note">このページの点を探しています…</p>';
   h += `<p class="note"><b>点をクリック</b>→記号を打ってEnter（そこにいた人とは入れ替え）。<b>何人か選んで（Shift+クリック、または前のセットで範囲選択）点の列をなぞる</b>→前のセットの並びのまま並べます。ピンクの点線の丸はドラッグで動かせます。空いた所をクリックすると点を足せます。点を消すときは、点をクリックして「点を消す」。</p>
@@ -3024,7 +3052,7 @@ async function contePickRun(mode){   // 'one'：今のセット、'after'：次�
   const list = all ? conte.pages.filter(p => p.set >= from).map(p => p.set).sort((a, b) => a - b) : [ui.cur];
   if (!list.length) return toast(mode === 'after' ? 'このセットより後ろにコンテのページがありません' : 'このセットにはコンテのページがありません');
   if (!list.length || !contePageOf(list[0])) return toast('このセットにはコンテのページがありません');
-  pushHist(); let placed = 0, lostAll = new Set(), sets = 0, grown = 0, growTo = 0;
+  pushHist(); ui.noProp = true; let placed = 0, lostAll = new Set(), sets = 0, grown = 0, growTo = 0;
   // コンテの最初のページから拾うとき：何ページか分の印の数（多めのほう）を人数の目安にして、隊員が足りなければ足す
   if (!(list[0] > 0 && contePageOf(list[0] - 1))){
     const pages = conte.pages.filter(p => p.set >= list[0]).sort((a, b) => a.set - b.set).slice(0, 8), cnt = [];
@@ -3037,7 +3065,7 @@ async function contePickRun(mode){   // 'one'：今のセット、'after'：次�
     const pk = contePageOf(i), r = await contePick(i, k === 0 ? growTo : 0, pk && pk.done); if (!r) continue; sets++; placed += r.placed; grown += r.added || 0; r.lost.forEach(id => lostAll.add(id)); if (i === ui.cur) ui.sel = new Set(r.lost);
     ui.ver++; applyAllFTL();
   }
-  conte.busy = ''; changed(true); onSel();
+  conte.busy = ''; changed(true); ui.noProp = false; onSel();
   const names = [...lostAll].slice(0, 6).map(id => (S.performers.find(p => p.id === id) || {}).label).join('・');
   const fix = '誰がどの点かは前のセットからの動きで推測しています。人違いは、その人を正しい人の上に重ねるように動かすと入れ替わります';
   const gm = grown ? `隊員が足りなかったので${grown}人足しました（名前は「隊員」タブで変えられます）。` : '';
@@ -3323,9 +3351,11 @@ function setsHTML(){
   <div class="songedit"><input type="text" id="songName" value="${esc(song.name)}" aria-label="曲名"><label>拍子<input type="number" id="songMeter" min="1" max="12" step="1" value="${song.meter}"></label><label>最初の小節<input type="number" id="songBar0" step="1" value="${song.bar0 != null ? song.bar0 : 1}" style="width:4em"></label>
   <button data-act="delSong" class="danger" ${S.songs.length < 2 ? 'disabled' : ''}>この曲を削除</button></div>
   <div class="row"><span class="note">曲の区切り</span><button data-act="songSplit" ${songSets(g)[0] === ui.cur ? 'disabled' : ''} title="今のセットから後ろを、次の曲にします">「${esc(S.sets[ui.cur].name)}」から次の曲にする</button><button data-act="songMerge" ${g === 0 ? 'disabled' : ''} title="この曲のセットを、前の曲の続きにします">前の曲とつなげる</button></div>
+  <div class="row"><span class="note">直したとき後ろのセットに</span><select data-propmode aria-label="直したとき後ろのセットに反映するか"><option value="off" ${ui.propMode === 'same' || ui.propMode === 'all' ? '' : 'selected'}>反映しない</option><option value="same" ${ui.propMode === 'same' ? 'selected' : ''}>同じ位置の間は反映</option><option value="all" ${ui.propMode === 'all' ? 'selected' : ''}>後ろ全部を同じだけずらす</option></select></div>
   <div class="row"><button data-act="addSet" class="primary">＋ 次にセットを追加</button><button data-act="delSet" class="danger" ${nIn < 2 ? 'disabled' : ''}>このセットを削除</button></div>
   ${splitHTML()}
   <div class="row"><span class="note">順番</span><button data-act="setUp" ${songSets(g)[0] === ui.cur ? 'disabled' : ''} title="今のセットを1つ前と入れ替え">↑ 前へ</button><button data-act="setDown" ${songSets(g).slice(-1)[0] === ui.cur ? 'disabled' : ''} title="今のセットを1つ後ろと入れ替え">↓ 後ろへ</button></div>
+  <div class="row"><span class="note">隊形を</span><button data-act="setFrom" data-d="-1" ${ui.cur > 0 ? '' : 'disabled'} title="前のセットと同じ位置にする（人を選んでいればその人だけ）">← 前のセットと同じにする</button><button data-act="setFrom" data-d="1" ${ui.cur < S.sets.length - 1 ? '' : 'disabled'} title="次のセットと同じ位置にする（人を選んでいればその人だけ）">次のセットと同じにする →</button></div>
   <div class="row"><span class="note">セットの</span><button data-act="setCopy" title="今のセットの隊形・カウント・動き方をコピー">コピー</button><button data-act="setPasteNew" ${ui.setClip ? '' : 'disabled'} title="コピーしたセットを、今のセットの次に新しく追加">次に貼り付け</button><button data-act="setPasteOver" ${ui.setClip ? '' : 'disabled'} title="今のセットの隊形を、コピーしたセットの隊形で置き換える">今のセットに上書き</button>${ui.setClip ? `<span class="note">コピー中：${esc(ui.setClip.from)}</span>` : ''}</div>
   <div class="setlist"><div class="set-row head"><span></span><span>名前</span><span>移動</span><span>静止</span><span>テンポ</span><span>チェック</span></div>`;
   S.sets.forEach((s, i) => {
@@ -3694,6 +3724,8 @@ pane.addEventListener('change', e => {
   if (t.id === 'conteIn'){ const fs = [...(t.files || [])]; t.value = ''; conteImport(fs); return; }
   if (t.id === 'conteAdd'){ conte.add = t.checked; return; }
   if (t.id === 'conteShift'){ conte.shift = t.checked; return; }
+  if (t.dataset.propmode != null){ ui.propMode = t.value; try { localStorage.setItem(LSKEY + '.prop', ui.propMode); } catch (e) {}
+    toast({ off:'直したセットだけを変えます', same:'直したとき、後ろのセットでその人が同じ位置にいる間は、一緒に動かします', all:'直したとき、後ろのセット全部をその人が動いた分だけずらします' }[ui.propMode] || ''); renderSide(); return; }
   if (t.dataset.cpage != null){ conteAssign(+t.dataset.cpage, +t.value); return; }
   if (t.id === 'conteShow'){ conte.show = t.checked; render(); return; }
   if (t.id === 'contePage'){ const k = +t.value, old = contePageOf(ui.cur); if (k >= 0 && conte.pages[k]) conteAssign(k, ui.cur); else if (old){ conteAssign(conte.pages.indexOf(old), -1); } return; }
@@ -4032,6 +4064,13 @@ document.addEventListener('click', e => {
     if (S.auto.on && hi + 1 < S.sets.length) autoFix(hi + 1, false);
     autoFixAfterEdit(lo, false, `隊形を${a === 'setUp' ? '1つ前' : '1つ後ろ'}のセットと入れ替えました（カウントはそのまま）`);
     changed(true);
+  } else if (a === 'setFrom'){
+    const i = ui.cur, j = i + (+b.dataset.d); if (j < 0 || j >= S.sets.length) return;
+    const ids = ui.sel.size ? selIds() : S.performers.map(p => p.id), src = S.sets[j].pos, dst = S.sets[i].pos;
+    const diff = ids.filter(id => src[id] && dst[id] && (Math.abs(src[id][0] - dst[id][0]) > 1e-6 || Math.abs(src[id][1] - dst[id][1]) > 1e-6));
+    if (!diff.length) return toast(`${ui.sel.size ? '選んだ人は' : '全員'}もう「${S.sets[j].name}」と同じ位置です`);
+    ensureEdit(); pushHist(); diff.forEach(id => { dst[id] = [...src[id]]; });
+    changed(true); toast(`${ui.sel.size ? `選んだ${ids.length}人` : '全員'}を「${S.sets[j].name}」と同じ位置にしました（${diff.length}人が動きました）`);
   } else if (a === 'setCopy'){
     const s = S.sets[ui.cur], cp = o => o ? JSON.parse(JSON.stringify(o)) : undefined;
     ui.setClip = { from:`${S.songs[s.sg].name} ${s.name}`, name:s.name, counts:s.counts, hold:s.hold, bpm:s.bpm, pos:cp(s.pos), pat:cp(s.pat), tm:cp(s.tm), wp:cp(s.wp), face:cp(s.face), mv:cp(s.mv), turns:cp(s.turns), ftl:cp(s.ftl) };
@@ -4140,7 +4179,7 @@ function copyText(text, msg){
   try { navigator.clipboard.writeText(text).then(() => toast(msg), fallback); } catch (e) { fallback(); }
 }
 let toastTimer = 0;
-function toast(m){ const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2400); }
+function toast(m){ if (ui.propMsg){ m += '。' + ui.propMsg; ui.propMsg = ''; } const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2400); }
 
 /* ---------- 共有：ファイル・画像・映像・画面の同期 ---------- */
 let dlNS = null, roomNS = null, userNS = null;
@@ -4723,7 +4762,7 @@ ui.t = tl()[0].arrive;
 new ResizeObserver(resize).observe(wrap);
 { let tw0 = 0; new ResizeObserver(() => { const w = $('#timeline').clientWidth; if (Math.abs(w - tw0) > 4){ tw0 = w; renderTimeline(); } }).observe($('#timeline')); }
 // スマホで初めて開いたときは、見るためのビューモードから
-let savedMode = 'edit'; try { savedMode = localStorage.getItem(LSKEY + '.mode') || (window.matchMedia && matchMedia('(max-width: 700px)').matches ? 'view' : 'edit'); ui.avOff = clamp(+localStorage.getItem(LSKEY + '.avoff') || 0, -1000, 1000); } catch (e) {}
+let savedMode = 'edit'; try { savedMode = localStorage.getItem(LSKEY + '.mode') || (window.matchMedia && matchMedia('(max-width: 700px)').matches ? 'view' : 'edit'); ui.avOff = clamp(+localStorage.getItem(LSKEY + '.avoff') || 0, -1000, 1000); ui.propMode = localStorage.getItem(LSKEY + '.prop') || 'off'; } catch (e) {}
 try { const lc = localStorage.getItem(LSKEY + '.libcur'); if (lc && libLoad().some(x => x.id === lc)) ui.libId = lc; } catch (e) {}
 renderTop(); renderSongbar(); renderTimeline(); setMode(savedMode); resize();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);

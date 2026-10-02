@@ -184,6 +184,17 @@ body.view .edit-only{display:none!important}
 .mark.songmark{border-left:2px solid var(--ink)}
 .mark.songmark i{color:var(--ink);font-weight:600}
 tr.songrow td{background:var(--surface2);font-weight:700;font-size:11px;color:var(--muted)}
+.asgpop{position:absolute;z-index:5;width:184px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px;box-shadow:0 8px 24px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:6px}
+.asgpop[hidden]{display:none}
+.asgpop input{width:100%;font-family:var(--mono);font-size:16px;padding:6px 8px}
+.asgsug{display:flex;flex-wrap:wrap;gap:4px;min-height:24px}
+.asgsug button{padding:3px 8px;font-family:var(--mono);font-size:13px}
+.asgsug button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.asgsug small{margin-left:3px;font-size:10px;opacity:.75}
+.asgbtn{display:flex;gap:4px;justify-content:space-between}
+.asgbtn button{font-size:12px;padding:3px 8px}
+.asgrest{display:flex;flex-wrap:wrap;gap:3px}
+.asgrest button{padding:2px 7px;font-family:var(--mono);font-size:12px}
 .contelist{display:flex;flex-direction:column;gap:6px}
 .contepage{display:flex;gap:8px;align-items:center;padding:4px;border-radius:8px;border:1px solid transparent}
 .contepage.on{border-color:var(--accent);background:var(--accent-soft)}
@@ -1724,7 +1735,7 @@ function render(){
   }
   drawDistances(c, P, fb);
   drawWaypoints(c, fb);
-  if (!ui.offscreen){ drawRotCenter(c, fb); drawConteHandles(c); }
+  if (!ui.offscreen){ drawRotCenter(c, fb); drawConteHandles(c); drawAssign(c); }
   // 隊員
   const hot = hotNow(P);
   const order = [...S.performers].sort((a, b) => (ui.sel.has(a.id) ? 1 : 0) - (ui.sel.has(b.id) ? 1 : 0));
@@ -1836,7 +1847,7 @@ function hitTest(sx, sy, P){
 }
 function atSet(){ const T = tl(); return ui.t >= T[ui.cur].arrive - 1e-6; }
 function ensureEdit(){ if (ui.playing) stop(); if (!atSet()){ ui.t = tl()[ui.cur].arrive; } ui.freezeT = ui.t; }
-function goSet(i){ stop(); const before = curSong(); ui.cur = clamp(i, 0, S.sets.length - 1); ui.t = tl()[ui.cur].arrive; ui.freezeT = ui.t; if (curSong() !== before){ renderTop(); renderSongbar(); renderTimeline(); } renderSide(); render(); }
+function goSet(i){ if (typeof asgClose === 'function') asgClose(); stop(); const before = curSong(); ui.cur = clamp(i, 0, S.sets.length - 1); ui.t = tl()[ui.cur].arrive; ui.freezeT = ui.t; if (curSong() !== before){ renderTop(); renderSongbar(); renderTimeline(); } renderSide(); render(); }
 function selIds(){ return S.performers.map(p => p.id).filter(id => ui.sel.has(id)); }
 
 cv.addEventListener('contextmenu', e => e.preventDefault());
@@ -1845,6 +1856,7 @@ cv.addEventListener('pointerdown', e => {
   const [sx, sy] = local(e);
   if (ui.pan || e.button === 1 || e.button === 2){ ui.drag = { mode:'pan', sx, sy, ox:view.ox, oy:view.oy }; cv.style.cursor = 'grabbing'; return; }
   { const hk = conteHandleAt(sx, sy); if (hk >= 0){ const pg = contePageOf(ui.cur); ui.drag = { mode:'conte', k:hk, pg }; conte.drag = pg; return; } }
+  if (asgOn() && e.button === 0 && !ui.rotPicking && asgPointerDown(e, sx, sy)) return;
   if (ui.rotPicking && ui.mode === 'edit'){ ui.rotPt = snapP(s2w(sx, sy)); ui.rotMode = 'pick'; ui.rotPicking = false; cv.style.cursor = ''; const d = describe(ui.rotPt); toast(`回す中心を ${d.lr} / ${d.fb} にしました`); renderSide(); render(); return; }
   if (ui.mode === 'view'){
     const hit = hitTest(sx, sy, dispPos());
@@ -1885,6 +1897,7 @@ cv.addEventListener('pointermove', e => {
     }
     return;
   }
+  if (asgPointerMove(d, sx, sy)) return;
   if (d.mode === 'rot'){
     if (!d.moved){ if (Math.hypot(sx - d.sx, sy - d.sy) < 3) return; pushHist(); d.moved = true; }
     const step = e.shiftKey ? 15 : 45, deg = normDeg(Math.round(Math.atan2(-(sy - d.cy), sx - d.cx) * 180 / Math.PI / step) * step);
@@ -1923,6 +1936,7 @@ cv.addEventListener('pointermove', e => {
 function endDrag(){
   const d = ui.drag; ui.drag = null; cv.style.cursor = ui.pan ? 'grab' : '';
   if (!d) return;
+  if (asgPointerUp(d)) return;
   if (d.mode === 'move' && d.moved){
     // コンテを下に敷いているセットで、1人を別の人のいる所へ落としたら、2人の位置を入れ替える（拾った点の人違いを直す）
     const ids = Object.keys(d.start), P0 = S.sets[ui.cur].pos;
@@ -2500,10 +2514,13 @@ function drawConte(c){
   const r = conteRect(pg, conte.drag === pg); if (!r) return;
   const cvs = conteCanvas(r), [sx, sy] = w2s(r.x0, r.y1);
   c.save(); c.globalAlpha = conte.alpha; c.imageSmoothingEnabled = true; c.drawImage(cvs, sx, sy, r.w / r.ppm * view.scale, r.h / r.ppm * view.scale); c.restore();
-  if (pg.dots && ui.mode === 'edit'){   // 拾った点で、まだ誰もいない所
+  if (conte.assign && ui.mode === 'edit' && !pg.dots) asgEnsureDots(pg);
+  if (pg.dots && ui.mode === 'edit'){   // 拾った点で、まだ誰もいない所（割り当て中は、人のいる点も薄く）
     const P0 = S.sets[ui.cur].pos, st = stepM(), rr = Math.max(6, dotRadius() + 3);
-    c.save(); c.strokeStyle = '#ff3d7f'; c.lineWidth = 2; c.setLineDash([4, 3]);
-    pg.dots.forEach(q => { if (S.performers.some(p => P0[p.id] && Math.hypot(P0[p.id][0] - q[0], P0[p.id][1] - q[1]) < st * 0.35)) return; const [x, y] = w2s(q[0], q[1]); c.beginPath(); c.arc(x, y, rr, 0, Math.PI * 2); c.stroke(); });
+    c.save(); c.strokeStyle = '#ff3d7f'; c.lineWidth = 2;
+    pg.dots.forEach(q => { const occ = S.performers.some(p => P0[p.id] && Math.hypot(P0[p.id][0] - q[0], P0[p.id][1] - q[1]) < st * 0.35), [x, y] = w2s(q[0], q[1]);
+      if (occ){ if (!conte.assign) return; c.setLineDash([]); c.globalAlpha = 0.5; c.beginPath(); c.arc(x, y, rr + 1, 0, Math.PI * 2); c.stroke(); c.globalAlpha = 1; }
+      else { c.setLineDash([4, 3]); c.beginPath(); c.arc(x, y, rr, 0, Math.PI * 2); c.stroke(); } });
     c.restore();
   }
 }
@@ -2515,6 +2532,188 @@ function drawConteHandles(c){
   c.restore();
 }
 function conteHandleAt(sx, sy){ if (!conte.align || ui.mode !== 'edit') return -1; const pg = contePageOf(ui.cur); if (!pg) return -1; return pg.world.findIndex(q => { const [x, y] = w2s(...q); return Math.hypot(x - sx, y - sy) < 14; }); }
+/* ---------- 記号で割り当て（コンテを見ながら手で速く置く） ---------- */
+// 点をクリックして記号を打つ・選んだ人を点の列になぞって並べる・点を動かす／足す／消す。割り当てた人はそのページの「割り当て済み」になる
+const nrmLabel = s => String(s == null ? '' : s).normalize('NFKC').trim();
+function asgFind(q){
+  q = nrmLabel(q); if (!q) return [];
+  const ps = S.performers, lq = q.toLowerCase();
+  if (/^(dm|\*|☆|★|星)$/i.test(q)) return ps.filter(isDM);
+  const ex = ps.filter(p => nrmLabel(p.label) === q), ci = ps.filter(p => !ex.includes(p) && nrmLabel(p.label).toLowerCase() === lq);
+  const pre = ps.filter(p => !ex.includes(p) && !ci.includes(p) && nrmLabel(p.label).toLowerCase().startsWith(lq));
+  return [...ex, ...ci, ...pre].slice(0, 6);
+}
+// 割り当てに使う点（まだなければコンテから探す）
+async function asgEnsureDots(pg){
+  if (pg.dots || pg.dotsBusy) return; pg.dotsBusy = true;
+  try { const found = await conteDots(pg); if (found && !pg.dots){ const n = S.performers.filter(p => !isDM(p)).length, sure = found.filter(conteSure).length; pg.dots = contePts(found, Math.min(MAX_P, Math.max(n, sure))).map(d => d.p); } }
+  finally { pg.dotsBusy = false; }
+  renderSide(); render();
+}
+const asgOn = () => conte.assign && ui.mode === 'edit' && !!contePageOf(ui.cur);
+function asgWho(q, except){ const pos = S.sets[ui.cur].pos, st = stepM(); return S.performers.find(p => p.id !== except && pos[p.id] && Math.hypot(pos[p.id][0] - q[0], pos[p.id][1] - q[1]) < st * 0.35) || null; }
+function conteDotAt(pg, sx, sy){ if (!pg.dots) return -1; let bi = -1, bd = 10; pg.dots.forEach((q, k) => { const [x, y] = w2s(q[0], q[1]), d = Math.hypot(x - sx, y - sy); if (d < bd){ bd = d; bi = k; } }); return bi; }
+const lbOf = id => (S.performers.find(p => p.id === id) || {}).label || '';
+// 入力欄
+const asgPop = document.createElement('div'); asgPop.className = 'asgpop'; asgPop.hidden = true;
+asgPop.innerHTML = '<input id="asgIn" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="記号（F1 など）" aria-label="この点に置く人の記号"><div class="asgsug" id="asgSug"></div><div class="asgbtn"><button type="button" data-asg="del">点を消す</button><button type="button" data-asg="close">閉じる</button></div>';
+wrap.appendChild(asgPop);
+const asgIn = asgPop.querySelector('#asgIn'), asgSug = asgPop.querySelector('#asgSug');
+let asgK = -1, asgHi = 0;
+function asgClose(){ asgPop.hidden = true; asgK = -1; }
+function asgPlace(){ const pg = contePageOf(ui.cur); if (asgK < 0 || !pg || !pg.dots || !pg.dots[asgK]) return asgClose(); const [x, y] = w2s(...pg.dots[asgK]); asgPop.style.left = clamp(x + 16, 4, Math.max(4, W - 200)) + 'px'; asgPop.style.top = clamp(y - 14, 4, Math.max(4, H - 170)) + 'px'; }
+function asgOpen(k){
+  const pg = contePageOf(ui.cur); if (!pg || !pg.dots || !pg.dots[k]) return;
+  asgK = k; asgHi = 0; const who = asgWho(pg.dots[k]), sel = selIds();
+  asgIn.value = sel.length === 1 && !(pg.done && pg.done.has(sel[0])) ? lbOf(sel[0]) : '';
+  asgIn.placeholder = who ? `今は ${lbOf(who.id)}。記号を入力` : '記号（F1 など）';
+  asgPop.hidden = false; asgPlace(); asgSuggest(); render();
+  setTimeout(() => { asgIn.focus(); asgIn.select(); }, 0);
+}
+function asgSuggest(){
+  const list = asgFind(asgIn.value), pg = contePageOf(ui.cur); asgHi = clamp(asgHi, 0, Math.max(0, list.length - 1));
+  asgSug.innerHTML = list.map((p, j) => `<button type="button" data-asgid="${esc(p.id)}" class="${j === asgHi ? 'on' : ''}">${esc(p.label)}${pg && pg.done && pg.done.has(p.id) ? '<small>済</small>' : ''}</button>`).join('') || (asgIn.value.trim() ? '<span class="note">見つかりません</span>' : '<span class="note">記号を打つと候補が出ます</span>');
+}
+asgIn.addEventListener('input', () => { asgHi = 0; asgSuggest(); });
+asgIn.addEventListener('keydown', e => {
+  const list = asgFind(asgIn.value);
+  if (e.key === 'Enter'){ e.preventDefault(); if (list[asgHi]) asgPerformer(list[asgHi].id, asgK); return; }
+  if (e.key === 'Escape'){ e.preventDefault(); asgClose(); render(); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){ e.preventDefault(); asgHi = (asgHi + (e.key === 'ArrowDown' ? 1 : -1) + Math.max(1, list.length)) % Math.max(1, list.length); asgSuggest(); return; }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && !asgIn.value){ e.preventDefault(); asgDelDot(asgK); }
+});
+asgPop.addEventListener('pointerdown', e => e.stopPropagation());
+asgPop.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.asgid) asgPerformer(b.dataset.asgid, asgK);
+  else if (b.dataset.asg === 'del') asgDelDot(asgK);
+  else if (b.dataset.asg === 'close'){ asgClose(); render(); }
+});
+function asgDelDot(k){
+  const pg = contePageOf(ui.cur); if (!pg || !pg.dots || !pg.dots[k]) return;
+  pg.dots.splice(k, 1); pg.userDots = true; asgClose(); renderSide(); render(); toast('点を消しました');
+}
+function asgAddDot(pg, w){
+  const q = snapP(w), st = stepM(), k0 = pg.dots.findIndex(p => Math.hypot(p[0] - q[0], p[1] - q[1]) < st * 0.35);
+  if (k0 >= 0) return asgOpen(k0);
+  pg.dots.push(q); pg.userDots = true; asgOpen(pg.dots.length - 1);
+}
+// 1人をその点に置く。そこにいた人とは入れ替える
+function asgPerformer(id, k){
+  const pg = contePageOf(ui.cur); if (!pg || !pg.dots || !pg.dots[k]) return asgClose();
+  ensureEdit(); pushHist();
+  const pos = S.sets[ui.cur].pos, q = [...pg.dots[k]], old = [...pos[id]], other = asgWho(q, id);
+  pos[id] = q; if (other){ pos[other.id] = old; if (pg.done) pg.done.delete(other.id); }
+  (pg.done = pg.done || new Set()).add(id); ui.sel = new Set([id]); asgClose(); changed(true); onSel();
+  toast(other ? `${lbOf(id)}をこの点に置きました（${lbOf(other.id)}と入れ替え）` : `${lbOf(id)}をこの点に置きました`);
+}
+// 選んだ人を、なぞった線の近くの点に並べる（前のセットの位置からの2乗距離の合計がいちばん小さい組み合わせ＝列の中の順番を保つ）
+function asgStroke(pg, line){
+  const st = stepM(), i = ui.cur, near = [];
+  pg.dots.forEach((q, k) => {
+    let best = Infinity, tpos = 0, acc = 0;
+    for (let s = 0; s < line.length; s++){
+      const a = line[s], b = line[s + 1] || a, vx = b[0] - a[0], vy = b[1] - a[1], L = Math.hypot(vx, vy), t = L ? clamp(((q[0] - a[0]) * vx + (q[1] - a[1]) * vy) / (L * L), 0, 1) : 0;
+      const d = Math.hypot(a[0] + vx * t - q[0], a[1] + vy * t - q[1]); if (d < best){ best = d; tpos = acc + t * L; } acc += L;
+    }
+    if (best < st * 0.6) near.push([tpos, k]);
+  });
+  near.sort((x, y) => x[0] - y[0]);
+  const ids = selIds(); if (!near.length){ render(); return toast('なぞった線の近くに点がありません'); }
+  const dots = near.map(x => [...pg.dots[x[1]]]), pos = S.sets[i].pos, prev = i > 0 ? S.sets[i - 1].pos : pos;
+  const n = ids.length, m = dots.length, A = ids.map(id => prev[id] || pos[id]), d2 = (a, b) => (A[a][0] - dots[b][0]) ** 2 + (A[a][1] - dots[b][1]) ** 2, pairs = [];
+  if (n <= m){ const c = new Float64Array(n * m); for (let a = 0; a < n; a++) for (let b = 0; b < m; b++) c[a * m + b] = d2(a, b); hungarian(c, n, m).forEach((b, a) => { if (b >= 0) pairs.push([a, b]); }); }
+  else { const c = new Float64Array(m * n); for (let b = 0; b < m; b++) for (let a = 0; a < n; a++) c[b * n + a] = d2(a, b); hungarian(c, m, n).forEach((a, b) => { if (a >= 0) pairs.push([a, b]); }); }
+  pairs.sort((x, y) => x[1] - y[1]);
+  asgApply(pg, pairs.map(([a]) => ids[a]), pairs.map(([, b]) => dots[b]));
+  toast(`${pairs.length}人をなぞった点に並べました${n !== m ? `（選んだ人 ${n}人・点 ${m}個）` : ''}。順番が逆なら「逆順にする」（Rキー）`);
+}
+function asgApply(pg, ids, dots){
+  ensureEdit(); pushHist();
+  const pos = S.sets[ui.cur].pos, st = stepM(), sel = new Set(ids), old = ids.map(id => [...pos[id]]), targets = dots.map(q => [...q]);
+  const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < st * 0.35;
+  // 行き先にほかの人がいたら、並べた人が空けた所へ移す
+  const displaced = S.performers.filter(p => !sel.has(p.id) && pos[p.id] && targets.some(q => near(pos[p.id], q)));
+  ids.forEach((id, j) => { pos[id] = targets[j]; });
+  const free = old.filter(q => !targets.some(t => near(t, q)));
+  displaced.forEach(p => { if (!free.length) return; let bi = 0, bd = Infinity; free.forEach((q, j) => { const d = Math.hypot(pos[p.id][0] - q[0], pos[p.id][1] - q[1]); if (d < bd){ bd = d; bi = j; } }); pos[p.id] = free.splice(bi, 1)[0]; if (pg.done) pg.done.delete(p.id); });
+  pg.done = pg.done || new Set(); ids.forEach(id => pg.done.add(id));
+  conte.last = { i:ui.cur, ids:[...ids], dots:targets.map(q => [...q]) };
+  changed(true);
+}
+function asgReverse(){
+  const L = conte.last, pg = contePageOf(ui.cur);
+  if (!L || L.i !== ui.cur || !pg || L.ids.length < 2) return toast('逆順にできる並べ方がありません（なぞって並べた直後に使えます）');
+  asgApply(pg, [...L.ids].reverse(), L.dots); toast(`${L.ids.length}人を逆順にしました`);
+}
+// まだ割り当てていない人を、空いている点に動きから当てる
+async function asgRest(){
+  const pg = contePageOf(ui.cur); if (!pg) return;
+  pushHist(); const r = await contePick(ui.cur, 0, pg.done || new Set()); ui.ver++; applyAllFTL(); changed(true);
+  if (r) toast(`まだ割り当てていない${r.placed + r.lost.length}人のうち${r.placed}人を空いている点に当てました（動きからの推測なので確かめてください）`);
+}
+// キャンバスの操作（割り当てモードのとき）。扱ったら true
+function asgPointerDown(e, sx, sy){
+  const pg = contePageOf(ui.cur); if (!pg || !pg.dots) return false;
+  asgClose();
+  const hit = hitTest(sx, sy, dispPos());
+  if (e.shiftKey || e.metaKey || e.ctrlKey){ if (hit){ ui.sel.has(hit) ? ui.sel.delete(hit) : ui.sel.add(hit); onSel(); return true; } return false; }
+  const k = conteDotAt(pg, sx, sy);
+  if (k >= 0){ ensureEdit(); const who = asgWho(pg.dots[k]); ui.drag = { mode:'dot', k, pg, sx, sy, moved:false, who:who ? who.id : null }; return true; }
+  if (hit) return false;   // 点の上にいない人は、ふだんどおり選ぶ・動かす
+  ensureEdit();
+  ui.drag = ui.sel.size >= 2 ? { mode:'stroke', pts:[s2w(sx, sy)], sx, sy, moved:false, pg } : { mode:'asgEmpty', sx, sy, pg };
+  return true;
+}
+function asgPointerMove(d, sx, sy){
+  if (d.mode === 'dot'){
+    if (!d.moved){ if (Math.hypot(sx - d.sx, sy - d.sy) < 4) return true; d.moved = true; if (d.who) pushHist(); }
+    const w = s2w(sx, sy); d.pg.dots[d.k] = w; if (d.who) S.sets[ui.cur].pos[d.who] = [...w]; ui.ver++; render(); return true;
+  }
+  if (d.mode === 'stroke'){
+    if (Math.hypot(sx - d.sx, sy - d.sy) > 4) d.moved = true;
+    const w = s2w(sx, sy), L = d.pts[d.pts.length - 1]; if (Math.hypot(w[0] - L[0], w[1] - L[1]) > stepM() * 0.15) d.pts.push(w); render(); return true;
+  }
+  if (d.mode === 'asgEmpty'){
+    if (Math.hypot(sx - d.sx, sy - d.sy) < 4) return true;
+    ui.band = { x0:d.sx, y0:d.sy, x1:sx, y1:sy, base:new Set() }; ui.sel.clear(); ui.drag = { mode:'band' }; render(); return true;
+  }
+  return false;
+}
+function asgPointerUp(d){
+  if (d.mode === 'dot'){
+    if (!d.moved){ asgOpen(d.k); return true; }
+    const q = snapP(d.pg.dots[d.k]); d.pg.dots[d.k] = q; d.pg.userDots = true;
+    if (d.who){ S.sets[ui.cur].pos[d.who] = [...q]; changed(true); } else render(); return true;
+  }
+  if (d.mode === 'stroke'){ if (d.moved) asgStroke(d.pg, d.pts); else asgAddDot(d.pg, s2w(d.sx, d.sy)); return true; }
+  if (d.mode === 'asgEmpty'){ asgAddDot(d.pg, s2w(d.sx, d.sy)); return true; }
+  return false;
+}
+// 割り当て済みの人に緑の輪、なぞっている線
+function drawAssign(c){
+  if (!asgOn()) return; const pg = contePageOf(ui.cur), P = dispPos(), rr = Math.max(7, dotRadius() + 4);
+  c.save();
+  if (pg.done && pg.done.size){ c.strokeStyle = '#22c55e'; c.lineWidth = 2.5; pg.done.forEach(id => { if (!P[id]) return; const [x, y] = w2s(...P[id]); c.beginPath(); c.arc(x, y, rr, 0, Math.PI * 2); c.stroke(); }); }
+  if (asgK >= 0 && pg.dots && pg.dots[asgK]){ const [x, y] = w2s(...pg.dots[asgK]); c.strokeStyle = '#ff3d7f'; c.lineWidth = 3; c.beginPath(); c.arc(x, y, rr + 4, 0, Math.PI * 2); c.stroke(); }
+  const d = ui.drag; if (d && d.mode === 'stroke' && d.pts.length > 1){ c.strokeStyle = 'rgba(255,61,127,.85)'; c.lineWidth = 4; c.lineCap = 'round'; c.lineJoin = 'round'; c.beginPath(); d.pts.forEach((q, j) => { const [x, y] = w2s(...q); j ? c.lineTo(x, y) : c.moveTo(x, y); }); c.stroke(); }
+  c.restore();
+  if (!asgPop.hidden) asgPlace();
+}
+function asgHelp(){ $('#help').textContent = asgOn() ? '割り当て：点をクリックして記号を入力 ・ 人を選んでから点の列をなぞる ・ 点はドラッグで動かす ・ 空いた所をクリックで点を足す ・ Shift+クリックで人を選ぶ' : (ui.mode === 'view' ? 'ドラッグで画面を動かす ・ クリックで人を選ぶ（Shiftで追加） ・ Spaceで再生 ・ [ ] で前後のセット' : 'ドラッグで移動 ・ Shift+クリックで追加選択 ・ 空いた所をドラッグで範囲選択 ・ 矢印キーで1歩 ・ Spaceで再生'); }
+function asgHTML(pg){
+  const P = S.performers, done = pg && pg.done ? pg.done : new Set(), rest = P.filter(p => !done.has(p.id));
+  let h = `<h2>記号で割り当て</h2>
+  <div class="row"><button data-act="conteAsg" class="${conte.assign ? 'on' : ''}" ${pg ? '' : 'disabled'}>${conte.assign ? '割り当てを終わる' : '割り当てを始める'}</button><button data-act="conteRev" ${conte.assign && conte.last && conte.last.i === ui.cur ? '' : 'disabled'}>逆順にする（R）</button></div>`;
+  if (!conte.assign) return h + '<p class="note">コンテの点に、記号を見ながら人を割り当てます。点をクリックして記号（F1 など）を打つか、何人か選んでから点の列をなぞると、その順に並べます。</p>';
+  if (pg && !pg.dots) return h + '<p class="note">このページの点を探しています…</p>';
+  h += `<p class="note"><b>点をクリック</b>→記号を打ってEnter（そこにいた人とは入れ替え）。<b>何人か選んで（Shift+クリック、または前のセットで範囲選択）点の列をなぞる</b>→前のセットの並びのまま並べます。ピンクの点線の丸はドラッグで動かせます。空いた所をクリックすると点を足せます。点を消すときは、点をクリックして「点を消す」。</p>
+  <p class="note">このセット：割り当て済み <b>${P.length - rest.length}</b> / ${P.length}人（緑の輪）</p>`;
+  if (rest.length) h += `<div class="asgrest">${rest.slice(0, 80).map(p => `<button data-act="asgSel" data-id="${esc(p.id)}" class="${ui.sel.has(p.id) ? 'on' : ''}">${esc(p.label)}</button>`).join('')}</div>
+  <div class="row"><button data-act="conteRest">残りを自動で当てる</button><button data-act="conteDoneClr" ${done.size ? '' : 'disabled'}>割り当て済みの印を消す</button></div>`;
+  else h += '<p class="note">全員割り当てました。「]」で次のセットへ。</p>';
+  return h;
+}
 async function conteImport(files){
   if (!files.length) return;
   conte.busy = 'コンテを読み込んでいます…'; renderSide();
@@ -2746,25 +2945,36 @@ async function conteDots(pg){
   const [hx, hy] = fieldHalf(), st = stepM(); return pg.fd.f.filter(d => Math.abs(d.p[0]) <= hx + st && Math.abs(d.p[1]) <= hy + st);
 }
 const conteSure = d => d.kind === 'int' && d.sc >= 12.5;
-// growTo：コンテの最初のページで人数がこれより少なければ、足りない人を足す
-async function contePick(i, growTo){
-  const pg = contePageOf(i); if (!pg) return null;
-  const found = await conteDots(pg); if (!found) return null;
-  const st = stepM(), g = gridStep(), P = S.performers.filter(p => !isDM(p)), n = P.length;
-  // 前のセットにコンテがない（コンテの最初のページ）：前の位置は当てにならないので、動ける距離で絞らない
-  const fresh = !(i > 0 && contePageOf(i - 1));
-  // 印はふつうマス目の交点（1歩ごと）にある。名前の文字はマス目の中（半歩の位置）に書かれることが多いので、交点の印を先に取り、
-  // 交点の印がずっと少ないページだけ、交点から外れた印（円・弧など）を、すでに取った印から離れたものだけ足す
-  // 自信のある印だけを使う（人数に合わせて無理に数をそろえると、文字を印と取り違えて人が一列ずれやすい）
-  const cap = fresh && growTo > n ? Math.min(MAX_P, growTo) : n;   // 人を足すときは、その人数まで点を使う
-  let pts = found.filter(conteSure).sort((x, y) => y.sc - x.sc).slice(0, cap);
+// 拾った印から、立ち位置に使う点を cap 個まで選ぶ
+// 印はふつうマス目の交点（1歩ごと）にある。名前の文字はマス目の中（半歩の位置）に書かれることが多いので、交点の印を先に取り、
+// 交点の印がずっと少ないページだけ、交点から外れた印（円・弧など）を、すでに取った印から離れたものだけ足す
+// 自信のある印だけを使う（人数に合わせて無理に数をそろえると、文字を印と取り違えて人が一列ずれやすい）
+function contePts(found, cap){
+  const st = stepM(), g = gridStep(); let pts = found.filter(conteSure).sort((x, y) => y.sc - x.sc).slice(0, cap);
   if (pts.length < cap * 0.85 || !pts.length){   // 交点の印が少ないページ（円・弧などの隊形）
     for (const d of found.filter(d => d.kind !== 'int' && d.sc >= 15).sort((x, y) => y.sc - x.sc)){
       if (pts.length >= cap) break;
       if (pts.every(q => (q.p[0] - d.p[0]) ** 2 + (q.p[1] - d.p[1]) ** 2 > st * st)) pts.push(d);
     }
   }
-  pts = pts.map(d => ({ p:d.kind === 'free' && g > 0 ? snapP(d.p) : d.p, sc:d.sc }));
+  return pts.map(d => ({ p:d.kind === 'free' && g > 0 ? snapP(d.p) : d.p, sc:d.sc }));
+}
+// growTo：コンテの最初のページで人数がこれより少なければ、足りない人を足す。keep：動かさない人（手で割り当てた人）
+async function contePick(i, growTo, keep){
+  const pg = contePageOf(i); if (!pg) return null;
+  const found = await conteDots(pg); if (!found) return null;
+  const st = stepM(); let P = S.performers.filter(p => !isDM(p)), n = P.length;
+  // 前のセットにコンテがない（コンテの最初のページ）：前の位置は当てにならないので、動ける距離で絞らない
+  const fresh = !(i > 0 && contePageOf(i - 1));
+  // 印はふつうマス目の交点（1歩ごと）にある。名前の文字はマス目の中（半歩の位置）に書かれることが多いので、交点の印を先に取り、
+  // 交点の印がずっと少ないページだけ、交点から外れた印（円・弧など）を、すでに取った印から離れたものだけ足す
+  // 自信のある印だけを使う（人数に合わせて無理に数をそろえると、文字を印と取り違えて人が一列ずれやすい）
+  const cap = fresh && growTo > n ? Math.min(MAX_P, growTo) : n;   // 人を足すときは、その人数まで点を使う
+  let pts = pg.userDots && pg.dots ? pg.dots.map(q => ({ p:[...q], sc:20 })) : contePts(found, cap);   // 点を手で直したページは、その点を使う
+  const allPts = pts;
+  // 手で割り当てた人と、その人のいる点は使わない
+  if (keep && keep.size){ const pos0 = S.sets[i].pos, kp = [...keep].map(id => pos0[id]).filter(Boolean);
+    pts = pts.filter(d => !kp.some(q => Math.hypot(q[0] - d.p[0], q[1] - d.p[1]) < st * 0.35)); P = P.filter(p => !keep.has(p.id)); n = P.length; }
   const prev = i > 0 ? S.sets[i - 1].pos : S.sets[i].pos, mC = pts.length, m = mC + n, pos = S.sets[i].pos, lost = [], used = new Set();
   // 前の位置がまだない（全員が同じ所）ときは、後ろの列から、左から順に当てはめる
   const pv = P.map(p => prev[p.id] || [0, 0]), flat = pv.every(q => Math.hypot(q[0] - pv[0][0], q[1] - pv[0][1]) < 1e-6);
@@ -2777,7 +2987,7 @@ async function contePick(i, growTo){
   if (flat){
     const ord = pts.map((d, b) => b).sort((x, y) => (pts[y].p[1] - pts[x].p[1]) || (pts[x].p[0] - pts[y].p[0]));
     P.forEach((p, a) => { if (a < ord.length){ pos[p.id] = [...pts[ord[a]].p]; used.add(ord[a]); } else lost.push(p.id); });
-    const added = growUp(); pg.dots = pts.map(d => d.p);
+    const added = growUp(); pg.dots = allPts.map(d => d.p);
     return { found:mC, placed:n - lost.length, lost, extra:mC - used.size, added };
   }
   // 誰がどの点か（名前の文字は読まないので、動きから推測する）
@@ -2806,7 +3016,7 @@ async function contePick(i, growTo){
     const r3 = hungarian(cost3, la.length, m3); la.forEach((a, x) => { const y = r3[x]; if (y >= 0 && y < fb.length && cost3[x * m3 + y] < 1e11) a2[a] = fb[y]; });
   }
   P.forEach((p, a) => { const b = a2[a]; if (b >= 0){ pos[p.id] = [...pts[b].p]; used.add(b); } else { if (i > 0) pos[p.id] = [...(prev[p.id] || pos[p.id])]; lost.push(p.id); } });
-  const added = growUp(); pg.dots = pts.map(d => d.p);
+  const added = growUp(); pg.dots = allPts.map(d => d.p);
   return { found:mC, placed:n - lost.length, lost, extra:mC - used.size, added };
 }
 async function contePickRun(mode){   // 'one'：今のセット、'after'：次のセットから後ろ、'all'：全部
@@ -2824,7 +3034,7 @@ async function contePickRun(mode){   // 'one'：今のセット、'after'：次�
   }
   for (const [k, i] of list.entries()){
     conte.busy = `点を拾っています… ${setLabel(i)}`; renderSide(); await new Promise(r => setTimeout(r, 0));
-    const r = await contePick(i, k === 0 ? growTo : 0); if (!r) continue; sets++; placed += r.placed; grown += r.added || 0; r.lost.forEach(id => lostAll.add(id)); if (i === ui.cur) ui.sel = new Set(r.lost);
+    const pk = contePageOf(i), r = await contePick(i, k === 0 ? growTo : 0, pk && pk.done); if (!r) continue; sets++; placed += r.placed; grown += r.added || 0; r.lost.forEach(id => lostAll.add(id)); if (i === ui.cur) ui.sel = new Set(r.lost);
     ui.ver++; applyAllFTL();
   }
   conte.busy = ''; changed(true); onSel();
@@ -2849,6 +3059,7 @@ function conteHTML(){
   <h2>位置合わせ</h2>
   <div class="row"><button data-act="conteAlign" class="${conte.align ? 'on' : ''}" ${pg ? '' : 'disabled'}>${conte.align ? '位置合わせを終わる' : '四隅をドラッグして合わせる'}</button><button data-act="conteAuto" ${pg ? '' : 'disabled'}>自動で合わせ直す</button></div>
   <p class="note">ピンク色の4つの点は、コンテの外枠の四隅です。コンテの線とフィールドの線が重なるようにドラッグしてください。${pg && !pg.auto ? '<b>このページは外枠を自動で見つけられませんでした。</b>' : ''}</p>
+  ${asgHTML(pg)}
   <h2>点を拾って配置</h2>
   <div class="row"><button data-act="contePick" class="primary" ${pg ? '' : 'disabled'}>このセットの点を拾う</button><button data-act="contePickAfter">次のセットから後ろを拾う</button><button data-act="contePickAll">全部のセットで拾う</button></div>
   <p class="note">コンテの丸・四角の印（マス目の交点の印を優先）を探して立ち位置にします。名前の文字は読まないので、誰がどの点かは前のセットからの動きで推測します。まっすぐ動く所はよく当たりますが、隊形が大きく変わる所は人違いが出やすいです。</p>
@@ -2871,7 +3082,7 @@ function renderSide(){
   else if (ui.tab === 'conte') pane.innerHTML = conteHTML();
   else if (ui.tab === 'aud') pane.innerHTML = audHTML();
   else pane.innerHTML = confHTML();
-  updateToolState();
+  updateToolState(); asgHelp();
   if (ui.tab === 'aud'){
     const L = pane.querySelector('.audlist'), on = L && L.querySelector('.audset.on');
     if (L){ if (keep != null) L.scrollTop = keep; else if (on) L.scrollTop = on.getBoundingClientRect().top - L.getBoundingClientRect().top - L.clientHeight / 3; }
@@ -3867,12 +4078,17 @@ document.addEventListener('click', e => {
   else if (a === 'selNone'){ ui.sel.clear(); renderSide(); render(); }
   else if (a === 'copyDot'){ const p = S.performers.find(x => x.id === ui.focus); copyText(tsvFor(p, true), 'コピーしました'); }
   else if (a === 'copyAll'){ copyText(S.performers.map(p => tsvFor(p, true)).join('\n\n'), `${S.performers.length}人分をコピーしました`); }
-  else if (a === 'conteAlign'){ conte.align = !conte.align; renderSide(); render(); }
+  else if (a === 'conteAlign'){ conte.align = !conte.align; if (conte.align){ conte.assign = false; asgClose(); } renderSide(); render(); }
   else if (a === 'conteAuto'){ const pg = contePageOf(ui.cur); if (pg){ pg.world = conteFieldCorners(); render(); toast(pg.auto ? '自動で見つけた外枠に合わせ直しました' : 'このページは外枠が見つからなかったので、四隅をドラッグして合わせてください'); } }
   else if (a === 'contePick'){ contePickRun('one'); }
   else if (a === 'contePickAfter'){ contePickRun('after'); }
   else if (a === 'contePickAll'){ contePickRun('all'); }
   else if (a === 'conteDrop'){ conteDrop(+b.dataset.k); }
+  else if (a === 'conteAsg'){ conte.assign = !conte.assign; asgClose(); if (conte.assign){ conte.align = false; if (ui.mode !== 'edit') setMode('edit'); const pg = contePageOf(ui.cur); if (pg && !pg.dots) asgEnsureDots(pg); } renderSide(); render(); }
+  else if (a === 'conteRev'){ asgReverse(); }
+  else if (a === 'conteRest'){ asgRest(); }
+  else if (a === 'conteDoneClr'){ const pg = contePageOf(ui.cur); if (pg && pg.done) pg.done.clear(); renderSide(); render(); }
+  else if (a === 'asgSel'){ ui.sel = new Set([b.dataset.id]); ui.focus = b.dataset.id; onSel(); renderSide(); }
   else if (a === 'conteGo'){ const p = conte.pages[+b.dataset.k]; if (p && p.set >= 0) goSet(p.set); }
   else if (a === 'conteClear'){ conte.pages = []; conte.align = false; conteCache.clear(); conteLRU.length = 0; renderSide(); render(); }
   else if (a === 'beatRedo'){ analyzeSongAudio(+b.dataset.k); }
@@ -4493,6 +4709,7 @@ document.addEventListener('keydown', e => {
   if (e.key === ']'){ goSet(ui.cur + 1); return; }
   if (e.key === 'Escape'){ ui.sel.clear(); onSel(); return; }
   if (!mod && (e.key === 'm' || e.key === 'M')){ e.preventDefault(); audTap(); return; }
+  if (!mod && (e.key === 'r' || e.key === 'R') && asgOn()){ e.preventDefault(); asgReverse(); return; }
   const st = (S.snap || 1) * stepM() * (e.shiftKey ? 4 : 1);
   const mv = { ArrowLeft:[-st, 0], ArrowRight:[st, 0], ArrowUp:[0, st], ArrowDown:[0, -st] }[e.key];
   if (mv && ui.sel.size){ e.preventDefault(); nudge(mv[0], mv[1]); }

@@ -417,6 +417,7 @@ label.row>input[type=checkbox],label.row>input[type=radio]{flex:none;margin-top:
 #vidCv{display:block;width:100%;touch-action:none;cursor:crosshair}
 .vidzoom{position:absolute;right:6px;top:6px;display:flex;gap:4px}
 .vidzoom button{background:rgba(0,0,0,.55);color:#fff;border-color:rgba(255,255,255,.35)}
+.vidzoom button:hover,.vidzoom button:focus{background:rgba(0,0,0,.78);color:#fff}
 .vidbusy{position:absolute;inset:0;display:grid;place-items:center;color:#fff;background:rgba(0,0,0,.45);font-weight:600}
 .vidswatch{width:22px;height:22px;border-radius:6px;border:1px solid var(--line);display:inline-block;flex:none}
 .vidtime .mono{min-width:4.2em;text-align:right}
@@ -5104,8 +5105,13 @@ document.addEventListener('keydown', e => {
 
 /* ====================================================================== */
 /* ---------- 版・更新内容 ---------- */
-const APP_VERSION = '11', APP_DATE = '2026-10-03';
+const APP_VERSION = '12', APP_DATE = '2026-10-03';
 const CHANGELOG = [
+  { v:'12', d:'2026-10-03', items:[
+    '動画から隊形を拾う：定点カメラ（ズームあり）の動画に対応しました。ズームしていないコマで四隅を合わせると、そのあとはズームして四隅が画面の外に出ても、フロアの正しい場所に置いたままにします（前は四角が画面の真ん中に寄ってしまうことがありました）',
+    '「カメラ」を選べます：定点（ズームあり）／カメラが動く（テレビ中継など。白い線を追いかける）／合わせ直さない',
+    '動画の画面を小さくして、画面の外にも四隅を置いたり見たりできます（「－」「四隅まで」）',
+  ] },
   { v:'11', d:'2026-10-03', items:[
     '動画から隊形を拾う（「コンテ」タブ）：大会などの動画でフロアの四隅を合わせると、ユニフォームの色から人の足もとを見つけてセットにします。AIは使わず、動画はこの端末の中だけで使います',
     '動画のカメラが動いても（パン・ズーム）、フロアの白い線を追いかけて合わせ直します',
@@ -6775,7 +6781,7 @@ function tplHTML(){
 const VID_MAXW = 960;
 const vid = { el:null, url:'', name:'', file:null, dur:0, t:0, w:0, h:0, img:null, cvs:null,
   corners:null, refK:'outer', H:null, cam:null, col:null, tol:1, thr:0.3, dets:[], mode:'move',
-  auto:true, z:null, busy:'', view:{ s:1, ox:0, oy:0 }, showSet:true, drag:null, seq:0, trackJob:0, cfg:{}, lastT:null, snap:true, place:'new', ptrs:new Map() };
+  auto:true, camMode:'zoom', zr:null, zA:null, zc:null, z:null, busy:'', view:{ s:1, ox:0, oy:0 }, showSet:true, drag:null, seq:0, trackJob:0, cfg:{}, lastT:null, snap:true, place:'new', ptrs:new Map() };
 
 /* --- フロアの線と、合わせる四角 --- */
 function vidRefs(){
@@ -6805,7 +6811,7 @@ function hInv(H){
   const [a, b, c, d, e, f, g, h, i] = H, A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g, det = a * A + b * B + c * C; if (Math.abs(det) < 1e-12) return null;
   return [A / det, -(b * i - c * h) / det, (b * f - c * e) / det, B / det, (a * i - c * g) / det, -(a * f - c * d) / det, C / det, -(a * h - b * g) / det, (a * e - b * d) / det];
 }
-function vidSetCorners(c){ vid.corners = c.map(q => [q[0], q[1]]); vid.H = vidH(vid.corners); vid.wSign = vid.H ? Math.sign(vid.H[8]) || 1 : 1; vid.hits = null; }
+function vidSetCorners(c, track){ vid.corners = c.map(q => [q[0], q[1]]); vid.H = vidH(vid.corners); vid.wSign = vid.H ? Math.sign(vid.H[8]) || 1 : 1; vid.hits = null; if (!track) vid.zr = null; }
 function vidDefaultCorners(){ const w = vid.w, h = vid.h; return [[w * 0.3, h * 0.42], [w * 0.7, h * 0.42], [w * 0.92, h * 0.86], [w * 0.08, h * 0.86]]; }
 
 /* --- カメラ：ホモグラフィーから焦点距離・向き・位置を出す（画面の中心が光軸と仮定） --- */
@@ -6861,11 +6867,11 @@ function vidSeekRaw(t){
 // 動画の時刻を動かす。「合わせ直す」がオンで、前の時刻から10秒以内なら、カメラの動きを追いかけてフロアを合わせ直す
 async function vidSeek(t){
   if (!vid.el) return; t = clamp(t, 0, Math.max(0, vid.dur - 0.05));
-  if (vid.auto && vid.corners && vid.img && vid.lastT != null && Math.abs(t - vid.lastT) <= 10 && Math.abs(t - vid.lastT) > 1e-3){
+  if (vid.auto && vid.corners && vid.img && vid.lastT != null && (vid.camMode === 'zoom' || Math.abs(t - vid.lastT) <= 10) && Math.abs(t - vid.lastT) > 1e-3){
     vid.busy = 'カメラの動きを追いかけています…'; vidRender();
     let shown = 0; const ok = await vidTrackTo(t, (d, n) => { if (d - shown >= 1){ shown = d; vid.busy = `カメラの動きを追いかけています…（${Math.round(d / Math.max(1e-6, n) * 100)}％）`; vidRender(); } });
     vid.busy = ''; vidRender();
-    if (!ok && vid.lost) toast('カメラが大きく動いて、フロアを見失いました。四隅をフロアの角に合わせ直して「線にぴったり合わせる」を押してください');
+    if (!ok && vid.lost) toast(vid.camMode === 'zoom' ? 'カメラが大きく動いて、前のコマと重ねられませんでした。四隅をフロアの角に合わせ直してください' : 'カメラが大きく動いて、フロアを見失いました。四隅をフロアの角に合わせ直して「線にぴったり合わせる」を押してください');
     return;
   }
   ++vid.trackJob; await vidSeekRaw(t); vid.lastT = vid.t; vidRender();
@@ -6982,6 +6988,7 @@ function vidCornersOK(c){
 // 動画を動かしたとき、カメラの動き（パン・ズーム）を追いかける：少しずつ（0.2秒ごと、合いが悪くなったらもっと細かく）進めて、そのたびに線に合わせる
 async function vidTrackTo(t, onStep){
   if (!vid.el || !vid.corners) return vidSeek(t);
+  if (vid.camMode === 'zoom') return vidZoomTrackTo(t, onStep);
   t = clamp(t, 0, Math.max(0, vid.dur - 0.05)); const t0 = vid.t, job = ++vid.trackJob;
   let cur = t0, last = vid.corners.map(q => [...q]), vel = null, h = 0.2;
   // 線に重なっている点の数（ズームすると減るので、前のコマと比べる）
@@ -7011,6 +7018,101 @@ async function vidTrackTo(t, onStep){
   }
   vid.lastT = vid.t; vid.dets = []; vidRender(); return true;
 }
+/* --- 定点カメラ（ズームあり）：最初に合わせた四隅を、ズームと少しのパンに合わせて動かす（四隅が画面の外に出てもそのまま） ---
+   フロアの線は使わず、画面全体の絵（客席・フロア・人）を前のコマと重ねて、画面の中心を軸にした拡大率 s と、ずれ (tx, ty) を出す。
+   動いている人は外れ値として弱める。ずれがたまらないよう、四隅を合わせたときのコマとも毎回重ね直す */
+const ZW = 320;
+function vidPyr(){
+  const { w, h } = vid, d = vid.img.data, W = Math.min(ZW, w), k = w / W, Hh = Math.max(8, Math.floor(h / k)), g = new Float32Array(W * Hh);
+  for (let y = 0; y < Hh; y++){ const y0 = Math.floor(y * k), y1 = Math.max(y0 + 1, Math.min(h, Math.floor((y + 1) * k)));
+    for (let x = 0; x < W; x++){ const x0 = Math.floor(x * k), x1 = Math.max(x0 + 1, Math.min(w, Math.floor((x + 1) * k))); let sm = 0, n = 0;
+      for (let yy = y0; yy < y1; yy++) for (let xx = x0; xx < x1; xx++){ const i = (yy * w + xx) * 4; sm += d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114; n++; }
+      g[y * W + x] = sm / n; } }
+  // 人のいる所（上着の色のまわり。足もと・楽器も含むよう下に広め）は、重ねるときに使わない（人が動くと、絵ごと動いたように見えてしまうため）
+  const col = vid.col || vid.autoCol || (vid.H ? (vid.autoCol = vidAutoColor()) : null); let m0 = null;
+  if (col){ const hue = (R, G, B) => { const mx = Math.max(R, G, B), mn = Math.min(R, G, B), c = mx - mn; if (!c) return [0, 0, mx]; let hh = mx === R ? ((G - B) / c) % 6 : mx === G ? (B - R) / c + 2 : (R - G) / c + 4; return [((hh * 60) + 360) % 360, c / mx, mx]; };
+    const [h0, s0] = hue(col[0], col[1], col[2]), sMin = Math.max(0.18, s0 * 0.45), raw = new Uint8Array(W * Hh);
+    for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++){ const xx = Math.min(w - 1, Math.floor((x + 0.5) * k)), yy = Math.min(h - 1, Math.floor((y + 0.5) * k)), i = (yy * w + xx) * 4, [hh, ss, vv] = hue(d[i], d[i + 1], d[i + 2]);
+      if (vv >= 40 && ss >= sMin){ const dh = Math.abs(hh - h0); if (Math.min(dh, 360 - dh) <= 20) raw[y * W + x] = 1; } }
+    m0 = new Uint8Array(W * Hh); const rx = 3, up = 4, dn = 12;
+    for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) if (raw[y * W + x]) for (let yy = Math.max(0, y - up); yy <= Math.min(Hh - 1, y + dn); yy++) for (let xx = Math.max(0, x - rx); xx <= Math.min(W - 1, x + rx); xx++) m0[yy * W + xx] = 1; }
+  const L = [{ w:W, h:Hh, a:g, m:m0 }];
+  while (L.length < 4 && L[L.length - 1].w >= 80){ const q = L[L.length - 1], w2 = q.w >> 1, h2 = q.h >> 1, a = new Float32Array(w2 * h2);
+    const m = q.m ? new Uint8Array(w2 * h2) : null;
+    for (let y = 0; y < h2; y++) for (let x = 0; x < w2; x++){ const i = 2 * y * q.w + 2 * x; a[y * w2 + x] = (q.a[i] + q.a[i + 1] + q.a[i + q.w] + q.a[i + q.w + 1]) / 4; if (m) m[y * w2 + x] = q.m[i] | q.m[i + 1] | q.m[i + q.w] | q.m[i + q.w + 1]; }
+    L.push({ w:w2, h:h2, a, m }); }
+  return { t:vid.t, L, k, W:vid.w, Hh:vid.h };
+}
+function zGrad(C){ if (C.gx) return; const { w, h, a } = C, gx = new Float32Array(w * h), gy = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++){ const i = y * w + x; gx[i] = (a[i + 1] - a[i - 1]) / 2; gy[i] = (a[i + w] - a[i - w]) / 2; }
+  C.gx = gx; C.gy = gy; }
+const zSmp = (A, w, X, Y) => { const xi = X | 0, yi = Y | 0, fx = X - xi, fy = Y - yi, i = yi * w + xi; return (A[i] * (1 - fx) + A[i + 1] * fx) * (1 - fy) + (A[i + w] * (1 - fx) + A[i + w + 1] * fx) * fy; };
+// ref の絵の点を、cur の絵の「s·(点 − 中心) + 中心 + (tx, ty)」に重ねる p = [s, tx, ty] を探す（tx, ty は元の画面の画素）
+function zAlign(ref, cur, p0, minL = 0, maxL = 9){
+  let [s, tx, ty] = p0, ncc = -1, nUsed = 0; const top = Math.min(ref.L.length, cur.L.length, maxL + 1) - 1;
+  for (let l = top; l >= minL; l--){
+    const R = ref.L[l], C = cur.L[l], f = ref.k * (1 << l); zGrad(C); zGrad(R);
+    const cx = R.w / 2, cy = R.h / 2, ccx = C.w / 2, ccy = C.h / 2; let a = tx / f, b = ty / f;
+    // 模様のある所（線・客席・人のふち）だけを使う。のっぺりしたフロアは、重なりのよしあしがわからないので使わない
+    if (!R.sel){ const mg = [], idx = []; for (let y = 2; y < R.h - 2; y++) for (let x = 2; x < R.w - 2; x++){ const i = y * R.w + x; if (R.m && R.m[i]) continue; mg.push(Math.hypot(R.gx[i], R.gy[i])); idx.push(i); }
+      const srt = mg.slice().sort((p, q) => p - q), thr = Math.max(2.5, srt[Math.floor(srt.length * 0.6)]); R.sel = idx.filter((i, k) => mg[k] >= thr);
+      if (R.sel.length > 12000){ const stp = R.sel.length / 12000; R.sel = R.sel.filter((i, k) => Math.floor(k / stp) !== Math.floor((k - 1) / stp)); } }
+    for (let it = 0; it < 20; it++){
+      const RV = [], CV = [], J0 = [], J1 = [], J2 = [];
+      for (const i of R.sel){ const x = i % R.w, y = (i / R.w) | 0;
+        const X = s * (x - cx) + ccx + a, Y = s * (y - cy) + ccy + b; if (X < 1 || Y < 1 || X >= C.w - 2 || Y >= C.h - 2) continue;
+        if (C.m && C.m[Math.round(Y) * C.w + Math.round(X)]) continue;
+        const gx = zSmp(C.gx, C.w, X, Y), gy = zSmp(C.gy, C.w, X, Y);
+        RV.push(R.a[y * R.w + x]); CV.push(zSmp(C.a, C.w, X, Y)); J0.push(gx * (x - cx) + gy * (y - cy)); J1.push(gx); J2.push(gy);
+      }
+      const n = RV.length; if (n < 60) return { ok:false, p:[s, tx, ty], ncc, n };
+      // 明るさ（露出）の変化をそろえる
+      let mr = 0, mc = 0; for (let k = 0; k < n; k++){ mr += RV[k]; mc += CV[k]; } mr /= n; mc /= n;
+      let vr = 0, vc = 0, cv = 0; for (let k = 0; k < n; k++){ const u = RV[k] - mr, v = CV[k] - mc; vr += u * u; vc += v * v; cv += u * v; }
+      if (vr < 1e-6 || vc < 1e-6) return { ok:false, p:[s, tx, ty], ncc, n };
+      const g = Math.sqrt(vr / vc); ncc = cv / Math.sqrt(vr * vc); nUsed = n;
+      const e = new Float32Array(n); for (let k = 0; k < n; k++) e[k] = (CV[k] - mc) * g - (RV[k] - mr);
+      // 動いている人などの外れ値は弱める（Tukey）
+      const ab = Array.from(e, Math.abs).sort((x, y) => x - y), sig = Math.max(6, 1.4826 * ab[n >> 1]), c = 4.685 * sig;
+      const H = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], gv = [0, 0, 0];
+      for (let k = 0; k < n; k++){ const r = e[k]; if (Math.abs(r) >= c) continue; const u = 1 - (r / c) ** 2, wt = u * u, j = [J0[k] * g, J1[k] * g, J2[k] * g];
+        for (let q = 0; q < 3; q++){ gv[q] -= wt * j[q] * r; for (let m = 0; m < 3; m++) H[q][m] += wt * j[q] * j[m]; } }
+      const dl = solveLin(H, gv); if (!dl || !dl.every(Number.isFinite)) break;
+      s += dl[0]; a += dl[1]; b += dl[2];
+      if (!(s > 0.2 && s < 5)) return { ok:false, p:[s, tx, ty], ncc, n };
+      if (Math.abs(dl[0]) < 1e-5 && Math.abs(dl[1]) < 0.005 && Math.abs(dl[2]) < 0.005) break;
+    }
+    tx = a * f; ty = b * f;
+  }
+  return { ok:ncc >= 0.3 && nUsed >= 60, p:[s, tx, ty], ncc, n:nUsed };
+}
+const zCompose = (A, B) => [B[0] * A[0], B[0] * A[1] + B[1], B[0] * A[2] + B[2]];   // A のあとに B
+const zApply = (A, q) => [A[0] * (q[0] - vid.w / 2) + vid.w / 2 + A[1], A[0] * (q[1] - vid.h / 2) + vid.h / 2 + A[2]];
+async function vidZoomTrackTo(t, onStep){
+  if (!vid.img || !vid.corners) return false;
+  t = clamp(t, 0, Math.max(0, vid.dur - 0.05)); const t0 = vid.t, job = ++vid.trackJob, total = Math.abs(t - t0);
+  if (!vid.zr){ const P = vidPyr(); vid.zr = { pyr:P, corners:vid.corners.map(q => [...q]), t:vid.t }; vid.zA = [1, 0, 0]; vid.zc = P; }
+  if (!vid.zc || vid.zc.t !== vid.t) vid.zc = vidPyr();
+  let cur = t0, h = 0.25;
+  while (Math.abs(t - cur) > 1e-6){
+    if (job !== vid.trackJob) return false;
+    const dir = Math.sign(t - cur), tk = Math.abs(t - cur) <= h + 1e-6 ? t : cur + dir * h;
+    await vidSeekRaw(tk); if (job !== vid.trackJob) return false;
+    const P = vidPyr(), r = zAlign(vid.zc, P, [1, 0, 0]);
+    if (!r.ok || r.ncc < 0.55){ if (h > 0.05){ h /= 2; continue; } vid.lost = true; vid.lastT = vid.t; vid.zc = null; vid.dets = []; vidRender(); return false; }
+    // 四隅を合わせたときのコマとも重ね直す（少しずつのずれがたまらないように）
+    let A = zCompose(vid.zA, r.p); const r2 = zAlign(vid.zr.pyr, P, A, 0, 1); if (r2.ok && r2.ncc >= r.ncc - 0.25 && Math.abs(r2.p[0] / A[0] - 1) < 0.05) A = r2.p;
+    if (vid.zlog) vid.zlog.push([+tk.toFixed(2), r.p.map(v => +v.toFixed(3)), +r.ncc.toFixed(2), r2.p.map(v => +v.toFixed(3)), +r2.ncc.toFixed(2), r2.ok, A === r2.p]);
+    vid.zA = A; vid.zc = P; cur = tk; vid.lost = false; vid.fit = null;
+    vidSetCorners(vid.zr.corners.map(q => zApply(A, q)), true);
+    const still = Math.abs(r.p[0] - 1) < 0.003 && Math.hypot(r.p[1], r.p[2]) < 1;
+    h = still ? Math.min(1, h * 2) : Math.min(0.2, Math.max(0.05, h));
+    if (onStep) onStep(Math.abs(cur - t0), total);
+  }
+  vid.lastT = vid.t; vid.dets = []; vidRender(); return true;
+}
+// 四隅のうち、画面の外にあるもの
+const vidOffCorners = () => vid.corners ? vid.corners.filter(q => q[0] < 0 || q[1] < 0 || q[0] > vid.w || q[1] > vid.h).length : 0;
 function solveLin(A, b){
   const n = b.length;
   for (let i = 0; i < n; i++){ let p = i; for (let r = i + 1; r < n; r++) if (Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
@@ -7365,14 +7467,16 @@ function vidHTML(){
     <div class="row"><label class="btn primary">動画を選ぶ<input type="file" id="vidIn" accept="video/*" hidden></label></div>`;
   const col = vid.col || vid.autoCol;
   return `<div class="vidstage" id="vidStage"><canvas id="vidCv" aria-label="動画のフレーム"></canvas>${vid.busy ? `<div class="vidbusy">${esc(vid.busy)}</div>` : ''}
-    <div class="vidzoom"><button data-act="vidZoom" data-v="1.5">＋</button><button data-act="vidZoom" data-v="0.67">－</button><button data-act="vidZoom" data-v="0">全体</button></div></div>
+    <div class="vidzoom"><button data-act="vidZoom" data-v="1.5">＋</button><button data-act="vidZoom" data-v="0.67">－</button><button data-act="vidZoom" data-v="0">全体</button>${vidOffCorners() ? '<button data-act="vidZoom" data-v="-1" title="画面の外の四隅まで見えるように小さくする">四隅まで</button>' : ''}</div></div>
   <div class="row vidtime"><button data-act="vidStep" data-v="-1">−1秒</button><button data-act="vidStep" data-v="-0.2">−0.2</button><input type="range" id="vidT" min="0" max="${vid.dur || 0}" step="0.05" value="${vid.t}" style="flex:1;min-width:8em" aria-label="動画の時刻"><button data-act="vidStep" data-v="0.2">+0.2</button><button data-act="vidStep" data-v="1">+1秒</button><span class="mono">${fmtTime(vid.t)}</span></div>
   <div class="row"><span class="note">動画の音</span><button data-act="vidUseAudio" ${sameAud ? 'disabled' : ''}>${sameAud ? '動画の音を音源にしています' : 'この動画の音を音源にする'}</button>${setT != null && timedSong(g) ? `<button data-act="vidGoSet">動画を${esc(S.sets[ui.cur].name)}の時刻（${fmtTime(setT)}）へ</button>` : ''}</div>
   <div class="row"><span class="note">画面のタップ</span><div class="modes"><button data-act="vidMode" data-v="move" class="${on('move')}">四隅を動かす</button><button data-act="vidMode" data-v="pick" class="${on('pick')}">上着の色を取る</button><button data-act="vidMode" data-v="edit" class="${on('edit')}">人を足す・消す</button></div></div>
   <h3>① フロアを合わせる</h3>
   <div class="row"><span class="note">ピンクの点を</span><select id="vidRef" aria-label="合わせる四角">${refs.map(r => `<option value="${r.k}" ${r.k === vid.refK ? 'selected' : ''}>${esc(r.n)}</option>`).join('')}</select><span class="note">に合わせる</span></div>
-  <div class="row"><button data-act="vidRefine" class="primary">線にぴったり合わせる</button><label class="row"><input type="checkbox" id="vidAuto" ${vid.auto ? 'checked' : ''}>動画を動かしたら合わせ直す</label></div>
+  <div class="row"><button data-act="vidRefine" class="primary">線にぴったり合わせる</button></div>
+  <div class="row"><span class="note">カメラ</span><select id="vidCam" aria-label="カメラの動き" style="max-width:100%"><option value="zoom" ${vid.auto && vid.camMode === 'zoom' ? 'selected' : ''}>定点（ズームあり）</option><option value="lines" ${vid.auto && vid.camMode === 'lines' ? 'selected' : ''}>カメラが動く（白い線を追う）</option><option value="off" ${vid.auto ? '' : 'selected'}>合わせ直さない</option></select></div>
   <p class="note">4つの点（左奥・右奥・右前・左前）を、動画の中のその角までドラッグしてから「線にぴったり合わせる」を押します。水色の線が動画の白い線に重なればOKです。${vid.fit != null ? `今の合い方：${Math.round(vid.fit * 100)}％の線が重なっています。` : ''}</p>
+  <p class="note">${vid.camMode === 'zoom' && vid.auto ? `定点カメラ：ズームしていない（フロア全体が映っている）コマで四隅を合わせてください。そのあとはズームしても、四隅が画面の外に出ても、フロアの正しい場所に置いたままにします（画面の絵を前のコマと重ねて、ズームの大きさを測ります）。${vidOffCorners() ? `<b>今は四隅のうち${vidOffCorners()}つが画面の外です。</b>` : ''}` : vid.camMode === 'lines' && vid.auto ? 'カメラが動く動画：フロアの白い線に合わせ直しながら追いかけます（テレビ中継など）。' : '動画を動かしても四隅は動かしません（カメラが動かない動画のとき）。'}</p>
   <h3>② 人を見つける</h3>
   <div class="row"><span class="note">上着の色</span><span class="vidswatch" style="background:${col ? `rgb(${col.map(Math.round).join(',')})` : 'transparent'}"></span><span class="note">${vid.col ? 'タップで取った色' : '自動（いちばん多いあざやかな色）'}</span><button data-act="vidMode" data-v="pick" class="mini ${on('pick')}">動画の上着をタップして取る</button></div>
   <div class="row"><span class="note">色の幅</span><input type="range" id="vidTol" min="0.5" max="2" step="0.1" value="${vid.tol}" style="flex:1"><span class="note">見つける強さ</span><input type="range" id="vidThr" min="0.15" max="0.6" step="0.01" value="${0.75 - vid.thr}" style="flex:1"></div>
@@ -7416,6 +7520,7 @@ function vidDraw(){
   const c = cv.getContext('2d'), k = cw / vid.w * vid.view.s, V = vid.view;
   c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, cw, ch);
   const S2 = (u, v) => [(u - V.ox) * k, (v - V.oy) * k];
+  if (V.s < 1){ c.fillStyle = '#3a3f47'; c.fillRect(0, 0, cw, ch); }
   c.save(); c.translate(-V.ox * k, -V.oy * k); c.scale(k, k); c.drawImage(vid.cvs, 0, 0); c.restore();
   if (vid.H){
     c.lineWidth = 1.5; c.strokeStyle = '#38e1ff';
@@ -7447,7 +7552,7 @@ function vidPointer(e, kind){
   if (kind === 'move'){
     if (vid.ptrs.has(e.pointerId)) vid.ptrs.set(e.pointerId, [sx, sy]);
     const d = vid.drag; if (!d) return;
-    if (d.pinch && vid.ptrs.size === 2){ const [a, b] = [...vid.ptrs.values()], s = clamp(d.s0 * Math.hypot(a[0] - b[0], a[1] - b[1]) / Math.max(1, d.d0), 1, 8), k0 = vidFit() * d.s0, k1 = vidFit() * s;
+    if (d.pinch && vid.ptrs.size === 2){ const [a, b] = [...vid.ptrs.values()], s = clamp(d.s0 * Math.hypot(a[0] - b[0], a[1] - b[1]) / Math.max(1, d.d0), VID_MINS, 8), k0 = vidFit() * d.s0, k1 = vidFit() * s;
       const cu = d.o[0] + d.c[0] / k0, cvv = d.o[1] + d.c[1] / k0; vid.view.s = s; vid.view.ox = cu - d.c[0] / k1; vid.view.oy = cvv - d.c[1] / k1; vidClampView(); vidDraw(); return; }
     if (d.corner != null){ vid.corners[d.corner] = [u, v]; vidSetCorners(vid.corners); vid.dets = []; vidDraw(); return; }
     if (d.pan){ if (Math.hypot(sx - d.x, sy - d.y) > 6) d.moved = true; if (d.moved && vid.view.s > 1){ vid.view.ox = d.o[0] - (sx - d.x) / k; vid.view.oy = d.o[1] - (sy - d.y) / k; vidClampView(); vidDraw(); } }
@@ -7462,7 +7567,9 @@ function vidPointer(e, kind){
     }
   }
 }
-function vidClampView(){ const V = vid.view, vw = vid.w / V.s, vh = vid.h / V.s; V.ox = clamp(V.ox, 0, Math.max(0, vid.w - vw)); V.oy = clamp(V.oy, 0, Math.max(0, vid.h - vh)); }
+// 小さくしたとき（倍率1より下）は、動画を真ん中に置いて、まわりの画面の外にも四隅を置けるようにする
+const VID_MINS = 0.35;
+function vidClampView(){ const V = vid.view, vw = vid.w / V.s, vh = vid.h / V.s; V.ox = vw >= vid.w ? (vid.w - vw) / 2 : clamp(V.ox, 0, vid.w - vw); V.oy = vh >= vid.h ? (vid.h - vh) / 2 : clamp(V.oy, 0, vid.h - vh); }
 
 /* ---------- v9 のボタン・入力 ---------- */
 document.addEventListener('click', e => {
@@ -7666,7 +7773,13 @@ document.addEventListener('click', e => {
   else if (a === 'tplApply'){ tplApply(); }
   else if (a === 'vidOpen'){ vidOpen(); }
   else if (a === 'vidClose'){ vidClose(); }
-  else if (a === 'vidZoom'){ const v = +b.dataset.v, V = vid.view; if (!v){ V.s = 1; V.ox = 0; V.oy = 0; } else { const cu = V.ox + vid.w / V.s / 2, cvv = V.oy + vid.h / V.s / 2; V.s = clamp(V.s * v, 1, 8); V.ox = cu - vid.w / V.s / 2; V.oy = cvv - vid.h / V.s / 2; vidClampView(); } vidDraw(); }
+  else if (a === 'vidZoom'){ const v = +b.dataset.v, V = vid.view;
+    if (!v){ V.s = 1; V.ox = 0; V.oy = 0; }
+    else if (v < 0){ // 画面の外の四隅まで見えるように
+      const xs = vid.corners.map(q => q[0]).concat([0, vid.w]), ys = vid.corners.map(q => q[1]).concat([0, vid.h]), bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+      V.s = clamp(Math.min(vid.w / (bw * 1.08), vid.h / (bh * 1.08)), VID_MINS, 1); vidClampView(); }
+    else { const cu = V.ox + vid.w / V.s / 2, cvv = V.oy + vid.h / V.s / 2; V.s = clamp(V.s * v, VID_MINS, 8); V.ox = cu - vid.w / V.s / 2; V.oy = cvv - vid.h / V.s / 2; vidClampView(); }
+    vidDraw(); }
   else if (a === 'vidStep'){ vidSeek(vid.t + +b.dataset.v); }
   else if (a === 'vidMode'){ vid.mode = b.dataset.v; vidRender(); if (vid.mode === 'pick') toast('動画の中で、上着の色のところをタップしてください'); }
   else if (a === 'vidRefine'){ vid.busy = '線に合わせています…'; vidRender(); setTimeout(() => { vid.busy = ''; vidRefine(false); }, 20); }
@@ -7682,7 +7795,7 @@ document.addEventListener('change', e => {
   const t = e.target; if (!t || !t.id) return;
   if (t.id === 'vidIn' && t.files && t.files[0]){ vidLoadFile(t.files[0]); return; }
   if (t.id === 'vidRef'){ const old = vidWorld(), H = vid.H; vid.refK = t.value; if (H) vidSetCorners(vidWorld().map(q => hApply(H, q[0], q[1]))); vidRender(); return; }
-  if (t.id === 'vidAuto'){ vid.auto = t.checked; return; }
+  if (t.id === 'vidCam'){ vid.auto = t.value !== 'off'; if (vid.auto) vid.camMode = t.value; vid.zr = null; vid.lastT = vid.t; vidRender(); return; }
   if (t.id === 'vidSnap'){ vid.snap = t.checked; return; }
   if (t.id === 'vidAutoN'){ vid.autoN = clamp(Math.round(+t.value || 4), 1, 32); return; }
   if (t.id === 'vidAutoEnd'){ const v = parseMS(t.value); vid.autoEnd = Number.isFinite(v) && v > 0 ? v : null; vidRender(); return; }
@@ -7703,7 +7816,7 @@ document.addEventListener('pointermove', e => { if (vid.drag || vid.ptrs.size) v
 ['pointerup', 'pointercancel'].forEach(ev => document.addEventListener(ev, e => { if (vid.drag || vid.ptrs.has(e.pointerId)) vidPointer(e, 'up'); }));
 window.addEventListener('resize', () => { if ($('#vidModal') && !$('#vidModal').hidden) vidDraw(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#vidModal') && !$('#vidModal').hidden){ vidClose(); e.stopPropagation(); } }, true);
-if (window.__db) Object.assign(window.__db, { onSel, vidHoles, vidRelink, latticeDirs, rankGroups, tplSet, tplApply, tplSlots, vid, vidLoadFile, vidRender, vidSeek, vidSeekRaw, vidTrackTo, vidFitCorners, vidCornersOK, vidLineMap, vidRefine, vidDetect, vidCapture, vidCamera, vidProj3, vidLocal, vidSetCorners, vidWorld, vidOpen, vidMasks, vidCalibZ, fieldSegs, hInv, homography, hApply, vidUseAudio, vidGoSet, vidEditAt, vidAssign, vidPlace, vidAutoRun, vidSimplify, vidAddSet, nearestBeat, stepM, beatMap, songTime, songAudioAt, songSets });
+if (window.__db) Object.assign(window.__db, { onSel, vidHoles, vidRelink, vidZoomTrackTo, zAlign, vidPyr, vidOffCorners, latticeDirs, rankGroups, tplSet, tplApply, tplSlots, vid, vidLoadFile, vidRender, vidSeek, vidSeekRaw, vidTrackTo, vidFitCorners, vidCornersOK, vidLineMap, vidRefine, vidDetect, vidCapture, vidCamera, vidProj3, vidLocal, vidSetCorners, vidWorld, vidOpen, vidMasks, vidCalibZ, fieldSegs, hInv, homography, hApply, vidUseAudio, vidGoSet, vidEditAt, vidAssign, vidPlace, vidAutoRun, vidSimplify, vidAddSet, nearestBeat, stepM, beatMap, songTime, songAudioAt, songSets });
 
 /* ---------- 起動 ---------- */
 cssSans = getComputedStyle(document.documentElement).getPropertyValue('--sans').trim() || 'sans-serif';

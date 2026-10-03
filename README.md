@@ -44,7 +44,7 @@
 - 動きの計算が前と同じか（`tests/fixtures/motion-golden.json` と比べる）
 - 音源（この端末に覚える・音源のURL・音源込みのファイル・カウントインの前の小節・小節の頭／裏拍のクリック）。テスト用の音は `tests/fixtures/click120.wav`
 - v10 の道具（ベルフロント・メモのセット選び・半歩ずらす案・歩幅のばらつき・パートまとめのドットシート・全員のリンク一覧・コンテのQR・大会のルール・`?show=` で開く）
-- v11 の道具（ゲートターン・平行四辺形・形をくり返して並べる）と、動画から隊形を拾う機能（線に合わせる・人を見つける・セットにする・続けて拾う・まとめる）。テスト用の動画 `tests/fixtures/floor_test.webm` は、`tests/fixtures/make_floor_test.py` で作った絵の動画です（本物の大会の動画は入れていません）
+- v11 の道具（ゲートターン・平行四辺形・形をくり返して並べる）と、動画から隊形を拾う機能（線に合わせる・人を見つける・セットにする・続けて拾う・まとめる）。テスト用の動画 `tests/fixtures/floor_test.webm`（カメラが動かない）と `tests/fixtures/zoom_test.webm`（定点カメラでズームする）は、同じフォルダの `make_floor_test.py`・`make_zoom_test.py` で作った絵の動画です（本物の大会の動画は入れていません）
 
 ### 自分のパソコンで動かすとき（なくても大丈夫です）
 
@@ -69,7 +69,7 @@ GitHub Desktop（無料）を使うと、次のようにできます。
 1. GitHub Desktop を入れて、GitHub のアカウントでログイン
 2. 「Clone a repository」で `drillboard` を選び、パソコンの中にフォルダを作る
 3. 新しい `index.html` を、そのフォルダの `index.html` に上書きする
-4. GitHub Desktop の左下の「Summary」に、何を変えたか書く（例：「v11：動画から隊形を拾う・ゲートターン」）
+4. GitHub Desktop の左下の「Summary」に、何を変えたか書く（例：「v12：定点カメラ（ズームあり）の動画に対応」）
 5. 「Commit to main」→ 右上の「Push origin」
 
 こうしておくと「History」タブで、いつ・何を変えたかが一覧で見られ、まちがえたときも「Revert」で前の版に戻せます。

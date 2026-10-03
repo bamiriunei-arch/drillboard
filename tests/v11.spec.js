@@ -129,3 +129,34 @@ test('見失っていた人の動きをつなぎ直す：まわりと同じよ�
   expect(r.n).toBe(1);
   expect(r.x).toEqual([1, 2, 3, 4]);
 });
+
+test('定点カメラ（ズームあり）：ズームして四隅が画面の外に出ても、フロアの正しい場所のまま', async ({ page }) => {
+  const errors = await openApp(page);
+  const Z = require('./fixtures/zoom_test.json');
+  await page.evaluate(() => { const D = __db; D.S = D.normalize(D.emptyShow('square')); D.afterLoad(true); D.openTab('conte'); });
+  await page.click('[data-act="vidOpen"]');
+  await page.locator('#vidIn').setInputFiles(path.join(__dirname, 'fixtures', 'zoom_test.webm'));
+  await page.waitForFunction(() => __db.vid.w > 0, null, { timeout:20000 });
+  await page.evaluate(async () => { __db.vid.auto = false; await __db.vidSeek(0.5); });
+  await page.selectOption('#vidRef', 'inner');
+  const sc = await page.evaluate(W => __db.vid.w / W, Z.W);
+  // ズームしていないコマ（0.5秒）で、中の四角の四隅を合わせる
+  await page.evaluate(c => __db.vidSetCorners(c), Z.frames[5].inner.map(q => [q[0] * sc, q[1] * sc]));
+  await page.selectOption('#vidCam', 'zoom');
+  // 3.5秒：2.2倍にズームしたあと（手前の角は画面の外）。人は右へ1.5m動いている
+  await page.evaluate(async () => { await __db.vidSeek(3.5); });
+  const r = await page.evaluate(() => ({ c:__db.vid.corners, off:__db.vidOffCorners(), lost:!!__db.vid.lost }));
+  const truth = Z.frames[35].inner.map(q => [q[0] * sc, q[1] * sc]);
+  const err = Math.max(...r.c.map((q, k) => Math.hypot(q[0] - truth[k][0], q[1] - truth[k][1])));
+  expect(r.lost).toBe(false);
+  expect(r.off).toBeGreaterThanOrEqual(2);
+  expect(err).toBeLessThan(8 * sc);
+  // 人の足もとも、フロアの正しい場所に見つかる
+  await page.evaluate(() => __db.vidDetect(true));
+  const miss = await page.evaluate(P => P.filter(q => !__db.vid.dets.some(d => Math.hypot(d.p[0] - q[0], d.p[1] - q[1]) < 0.5)).length, Z.frames[35].people);
+  expect(miss).toBe(0);
+  // 画面の外の四隅まで見えるように小さくできる
+  await page.click('[data-act="vidZoom"][data-v="-1"]');
+  expect(await page.evaluate(() => __db.vid.view.s)).toBeLessThan(1);
+  await noErrors(errors);
+});

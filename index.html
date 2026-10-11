@@ -3753,6 +3753,7 @@ function perfHTML(){
   <details class="roster" id="rosterBox" ${ui.rosterOpen ? 'open' : ''}><summary>名簿を貼り付けてまとめて追加</summary><div class="inner">
     <p class="note">Excelやメモから「名前」と「パート」を1行に1人ずつ貼り付けます（タブ・カンマ区切り）。パートは「トランペット」「Tp」「ホルン」などで読み取ります。名前だけの行は下で選んだパートになります。</p>
     <textarea id="rosterIn" spellcheck="false" placeholder="山田	トランペット&#10;佐藤	Tb&#10;鈴木	カラーガード">${esc(ui.rosterText)}</textarea>
+    ${(n => n ? `<div class="row"><button data-act="fromGakuya">楽屋の部員（${n}人）を入れる</button><button data-act="fromGakuya" data-short="1">名字だけで入れる</button></div><p class="note">同じ場所の楽屋に入れた部員（在籍・エキストラ・賛助）の名前とパートを、下の欄に入れます。確かめてから「名簿から追加」を押してください。</p>` : '')(gakuyaMembers().length)}
     <div class="row"><span class="note">名前だけの行のパート</span><select id="rosterSec" aria-label="名前だけの行のパート">${secOptions(ui.rosterSec, true)}</select></div>
     <p class="note" id="rosterPrev">${esc(rosterPreview())}</p>
     <div class="row"><button data-act="addRoster" class="primary">名簿から追加</button></div>
@@ -3864,7 +3865,7 @@ function audioRowHTML(k){
   const g = S.songs[k], m = beatMap(k), busy = ui.beatBusy && ui.beatBusy[k], st = songTime(k), an = st ? st.anchors.length : 0, A = ui.audios[k], ed = ui.mode === 'edit';
   const state = !A ? '<span class="note">未読み込み（クリック音だけ）</span>' : `<span class="note">${esc(A.name)}${A.el && Number.isFinite(A.el.duration) && A.el.duration > 0 ? `（${fmtTime(A.el.duration)}）` : ''}</span>${A.err ? '<span class="chip bad">読めません</span>' : A.remote ? '<span class="chip neutral">URLから</span>' : A.stored ? '<span class="chip ok">この端末に保存</span>' : ''}<button data-act="clearAudio" data-k="${k}">外す</button>`;
   return `<div class="audiorow"><div class="row"><b>${esc(g.name)}</b><span class="note">${m ? beatRangeText(k) + '（音源）' : '♩=' + g.bpm}${an ? `・合わせたセット ${an}` : ''}</span></div>
-    <div class="row"><label class="btn">音声ファイルを選ぶ<input type="file" data-audio="${k}" accept="audio/*,video/mp4,video/quicktime,video/webm" hidden></label>${state}</div>
+    <div class="row"><label class="btn">音声ファイルを選ぶ<input type="file" data-audio="${k}" accept="audio/*,video/mp4,video/quicktime,video/webm" hidden></label><button data-act="gmPick" data-k="${k}" title="楽屋シリーズのファイル置き場（テンポマップ・合奏ノートの録音など）から選びます">入っている録音から</button>${state}</div>
     ${ed ? `<div class="row"><span class="note">音源のURL</span><input type="text" inputmode="url" data-aurl="${k}" value="${esc(g.url || '')}" placeholder="audio/曲名.mp3 か https://…" style="flex:1;min-width:10em" aria-label="${esc(g.name)}の音源のURL"></div>`
       : g.url ? `<p class="note">音源のURL：${esc(g.url)}</p>` : ''}
     ${busy ? '<p class="note">音源のテンポを調べています…</p>' : ''}
@@ -4437,6 +4438,8 @@ document.addEventListener('click', e => {
     autoFixAfterEdit(ui.cur, false, a === 'setPasteNew' ? `「${c.name}」を次のセットとして貼り付けました` : `「${cur.name}」の隊形を「${c.name}」で上書きしました`);
     changed(true);
   } else if (a === 'addRoster'){ addRoster();
+  } else if (a === 'fromGakuya'){ fromGakuya(b.dataset.short === '1');
+  } else if (a === 'gmPick'){ gmPick(+b.dataset.k);
   } else if (a === 'copyRoster'){ copyText(rosterTSV(), `${S.performers.length}人の一覧をコピーしました`);
   } else if (a === 'delPerf'){
     if (!armed(b)) return; pushHist(); const ids = new Set(selIds());
@@ -5105,8 +5108,13 @@ document.addEventListener('keydown', e => {
 
 /* ====================================================================== */
 /* ---------- 版・更新内容 ---------- */
-const APP_VERSION = '12', APP_DATE = '2026-10-03';
+const APP_VERSION = '13', APP_DATE = '2026-10-11';
 const CHANGELOG = [
+  { v:'13', d:'2026-10-11', items:[
+    '楽屋（同じ場所の楽屋シリーズ）に入れた部員を、まとめて隊員にできるようにしました（「隊員」→「名簿を貼り付けてまとめて追加」→「楽屋の部員を入れる」）。名字だけでも入れられます',
+    '楽屋シリーズの「ファイル置き場」の録音（テンポマップで録った通し・合奏ノートの録音など）を、曲の音源に選べるようにしました（「音源」→「入っている録音から」）',
+    'ドリルボードで選んだ音源も、ファイル置き場に入れて、合奏ノートなどほかのツールから選べるようにしました',
+  ] },
   { v:'12', d:'2026-10-03', items:[
     '動画から隊形を拾う：定点カメラ（ズームあり）の動画に対応しました。ズームしていないコマで四隅を合わせると、そのあとはズームして四隅が画面の外に出ても、フロアの正しい場所に置いたままにします（前は四角が画面の真ん中に寄ってしまうことがありました）',
     '「カメラ」を選べます：定点（ズームあり）／カメラが動く（テレビ中継など。白い線を追いかける）／合わせ直さない',
@@ -5188,6 +5196,8 @@ function plainShow(sh){
 }
 
 /* ---------- 確かめる画面（confirm のかわり） ---------- */
+/* ファイル置き場の録音の一覧（ask の中） */
+(() => { const st = document.createElement('style'); st.textContent = '.gmlist{display:flex;flex-direction:column;gap:6px;max-height:min(55vh,420px);overflow:auto;margin-top:6px}.gmitem{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;width:100%;padding:8px 10px}.gmitem .note{font-size:12px}'; document.head.appendChild(st); })();
 function ask(title, html, btns){
   return new Promise(res => {
     const m = $('#askModal'); if (!m){ res(null); return; }
@@ -6193,10 +6203,62 @@ function normAudioURL(u){
   try { return new URL(u, location.href).href; } catch (e) { return u; }
 }
 function audFromURL(url, g){ const el = new Audio(); el.preload = 'auto'; el.src = normAudioURL(url); return { el, name:(String(url).split('?')[0].split('/').pop() || '音源'), url:el.src, remote:true, key:songKey(g) }; }
-async function audSetFile(g, f){
+async function audSetFile(g, f, fromStore){
   setAudioObj(g, audFromBlob(f, f.name, g)); try { renderSide(); } catch (e) {} analyzeSongAudio(g);
   try { await audSave(songKey(g), { buf:await f.arrayBuffer(), type:f.type || 'audio/mpeg', name:f.name, at:Date.now(), title:S.title, song:S.songs[g].name }); if (ui.audios[g]) ui.audios[g].stored = true; if (ui.tab === 'aud' || ui.tab === 'conf') renderSide(); }
   catch (e) { toast('この端末に音源を覚えられませんでした（空き容量が足りないかもしれません）。次に開いたときは、もう一度選んでください'); }
+  // 楽屋シリーズのファイル置き場にも入れる（合奏ノートなど、ほかのツールから選べるように）。動画・大きいファイルは入れない
+  if (!fromStore && /^audio\//.test(f.type || 'audio/') && f.size <= 300 * 1048576) gmPut(f, { title:S.title, song:S.songs[g].name }).catch(() => {});
+}
+
+/* ---------- 楽屋（同じ場所の楽屋シリーズ）とつなぐ ---------- */
+// 楽屋の部員：localStorage の gakuya.org（楽屋のパートの記号 → ドリルボードのパート）
+const GKY_PART = { Pic:'Pic', Fl:'Fl', Ob:'Ot', 'E.H.':'Ot', Fg:'Ot', 'E♭Cl':'Cl', Cl:'Cl', 'A.Cl':'Cl', 'B.Cl':'BCl', 'S.Sax':'SS', 'A.Sax':'As', 'T.Sax':'Ts', 'B.Sax':'Bs', Tp:'Tp', Cor:'Tp', Hn:'Hr', Tb:'Tb', 'B.Tb':'BTb', Euph:'Eu', Tuba:'Tu', 'St.B':'Ot', Perc:'Pc', Pf:'Pit', Hp:'Pit',
+  Timp:'Pit', Mar:'Pit', Xylo:'Pit', Vib:'Pit', Glk:'Pit', Chime:'Pit', 'S.D.':'SD', 'B.D.':'BD', Cym:'Cym', 'Sus.Cym':'Cym', 'Tam-t':'Pc', Drs:'Pc', Toms:'TD', Tamb:'Pc', Tri:'Pc', 'W.B.':'Pc', Cong:'Pc', Bongo:'Pc', Timb:'Pc' };
+function gakuyaMembers(){
+  try {
+    const o = JSON.parse(localStorage.getItem('gakuya.org') || 'null'), ms = o && Array.isArray(o.members) ? o.members : [];
+    return ms.filter(m => m && String(m.name || '').trim() && ['active', 'extra', 'support'].includes(m.status || 'active')).map(m => ({ name:String(m.name).trim().replace(/\s+/g, ' '), sec:GKY_PART[m.part] || 'Ot' }));
+  } catch (e) { return []; }
+}
+function fromGakuya(short){
+  const ms = gakuyaMembers(); if (!ms.length) return toast('楽屋に部員が入っていません');
+  const nm = m => short ? m.name.split(' ')[0] : m.name, key = s => String(s).replace(/\s+/g, '');
+  const have = new Set(S.performers.map(p => key(p.label))), add = ms.filter(m => !have.has(key(nm(m))) && !have.has(key(m.name)));
+  if (!add.length) return toast('楽屋の部員は、もう全員が隊員にいます');
+  ui.rosterText = add.map(m => `${nm(m)}\t${secOf(m.sec).n}`).join('\n'); ui.rosterOpen = true;
+  renderSide();
+  toast(`楽屋の部員${add.length}人を名簿の欄に入れました${ms.length - add.length ? `（もう隊員にいる${ms.length - add.length}人はのぞきました）` : ''}。確かめて「名簿から追加」を押してください`);
+}
+// ファイル置き場：IndexedDB の gakuya-media（meta：一覧の情報、blob：中身）。楽屋シリーズの共通部品と同じ形
+let gmDBp = null;
+function gmDB(){
+  if (gmDBp) return gmDBp;
+  gmDBp = new Promise((res, rej) => {
+    try { const r = indexedDB.open('gakuya-media', 1); r.onupgradeneeded = () => { const db = r.result; if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath:'id' }); if (!db.objectStoreNames.contains('blob')) db.createObjectStore('blob'); }; r.onsuccess = () => { const db = r.result; db.onversionchange = () => { db.close(); gmDBp = null; }; res(db); }; r.onerror = () => rej(r.error); }
+    catch (e) { rej(e); }
+  });
+  gmDBp.catch(() => { gmDBp = null; });
+  return gmDBp;
+}
+async function gmList(){ const db = await gmDB(); return new Promise((res, rej) => { const t = db.transaction('meta', 'readonly'), r = t.objectStore('meta').getAll(); t.oncomplete = () => res((r.result || []).filter(m => m && m.cat === 'audio').sort((a, b) => (b.at || 0) - (a.at || 0))); t.onerror = () => rej(t.error); }); }
+async function gmGet(id){ const db = await gmDB(); return new Promise((res, rej) => { const t = db.transaction('blob', 'readonly'), r = t.objectStore('blob').get(id); t.oncomplete = () => res(r.result || null); t.onerror = () => rej(t.error); }); }
+async function gmPut(file, meta){
+  const same = (await gmList()).find(m => m.name === file.name && m.size === file.size); if (same) return same;
+  const db = await gmDB(), m = Object.assign({ id:'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), cat:'audio', name:file.name || '音源', type:file.type || '', size:file.size, at:Date.now(), from:'drillboard' }, meta);
+  return new Promise((res, rej) => { const t = db.transaction(['meta', 'blob'], 'readwrite'); t.objectStore('meta').put(m); t.objectStore('blob').put(file, m.id); t.oncomplete = () => res(m); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+}
+const GM_FROM = { tempomap:'テンポマップ', gassou:'合奏ノート', drillboard:'ドリルボード' };
+async function gmPick(g){
+  let xs = []; try { xs = await gmList(); } catch (e) { return toast('この端末のファイル置き場が使えません（プライベートブラウズなど）'); }
+  if (!xs.length) return toast('ファイル置き場に録音がありません。テンポマップで録った録音や、合奏ノートで開いた録音がここに入ります');
+  const when = t => { const d = new Date(t || 0); return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  const v = await ask(`「${S.songs[g].name}」の音源を選ぶ`, `<p class="note">楽屋シリーズのファイル置き場（この端末の中）にある録音です。</p><div class="gmlist">${xs.map(m => `<button data-askv="${esc(m.id)}" class="gmitem"><b>${esc(m.mapTitle || m.title || m.name)}</b><span class="note">${esc(when(m.at))}${m.dur ? '・' + fmtTime(m.dur) : ''}・${esc(GM_FROM[m.from] || m.from || '')}・${fmtMB(m.size || 0)}${m.name && (m.mapTitle || m.title) ? '・' + esc(m.name) : ''}</span></button>`).join('')}</div>`, [['', 'やめる']]);
+  if (!v) return;
+  const m = xs.find(x => x.id === v), blob = await gmGet(v).catch(() => null);
+  if (!m || !blob) return toast('録音が見つかりませんでした');
+  await audSetFile(g, new File([blob], m.name || '録音', { type:m.type || blob.type || 'audio/mpeg' }), true);
+  toast(`「${m.name}」を「${S.songs[g].name}」の音源にしました。拍を調べてテンポを合わせます`);
 }
 async function audClear(g){
   const A = ui.audios[g]; setAudioObj(g, null);
@@ -7687,6 +7749,7 @@ function startupV9(hadSaved){
 }
 // 自動テスト用（アドレスに ?test を付けたときだけ）
 if (/[?&]test\b/.test(location.search)) window.__db = {
+  gakuyaMembers, fromGakuya, gmList, gmPut, gmGet, gmPick, audSetFile,
   get S(){ return S; }, set S(v){ S = v; }, ui, view, hist, tl, total, posAt, secAt, packShow, unpackShow, normalize, makeCode, readCode, analyzeAll, goSet, changed, pushHist, undo, redo, afterLoad,
   sampleShow, emptyShow, describeAs, dotRows, diffShows, subsetShow, personalURL, snapLoad, maybeSnap, bestAssign, transStats, assignRun, applyRoles, fixOptions, fixAll, symInfo, mirrorSide,
   ruleCheck, parseMS, buildContePrint, buildSheetPrint, doPrint, loopRange, playRange, viewRange, stepCount, setSpeed, setLoop, setFlip, setBig, w2s, s2w, fit, openShared, plainShow,

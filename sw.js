@@ -1,12 +1,13 @@
 // ドリルボード：オフラインでも開けるようにするための仕組み
 // 自分のファイルはネットを先に見て（更新がすぐ届く）、つながらないときは保存しておいたものを使う
+// 古い保存を消すときは、ドリルボードの分（drillboard-）だけ消す（同じ場所の楽屋シリーズの保存は消さない）
 const CACHE = 'drillboard-v1';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-512-maskable.png', './apple-touch-icon.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('drillboard-') && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 self.addEventListener('fetch', e => {
   const r = e.request;
